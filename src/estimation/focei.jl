@@ -1126,6 +1126,26 @@ end
 function _focei_validate_distributions(
         dm::DataModel; ode_args::Tuple, ode_kwargs::NamedTuple
     )
+    d = _focei_unsupported_dist(dm; ode_args = ode_args, ode_kwargs = ode_kwargs)
+    d === nothing ||
+        error(
+        "FOCEI does not support outcome distribution $(typeof(d)). " *
+            "Supported families: Normal, LogNormal, Laplace, Cauchy, Exponential, " *
+            "Poisson, Bernoulli, Binomial, Geometric, Gamma, Beta, MvNormal. " *
+            "Use Laplace for hidden-Markov / unsupported outcomes."
+    )
+    return nothing
+end
+
+# Default random-effects approximation of Wald UQ (MCEM/SAEM fits) and identifiability:
+# FOCEI, or Laplace when an outcome family has no closed-form Fisher information.
+function _default_re_approx(dm::DataModel; ode_args::Tuple = (), ode_kwargs::NamedTuple = NamedTuple())
+    return _focei_unsupported_dist(dm; ode_args = ode_args, ode_kwargs = ode_kwargs) === nothing ?
+        FOCEI() : Laplace()
+end
+
+# First outcome distribution FOCEI cannot handle (at the initial values, b = 0), or nothing.
+function _focei_unsupported_dist(dm::DataModel; ode_args::Tuple, ode_kwargs::NamedTuple)
     fe = get_fixed(get_model(dm))
     θ0 = get_θ0_untransformed(fe)
     θ_re = _symmetrize_psd_params(θ0, fe)
@@ -1139,13 +1159,7 @@ function _focei_validate_distributions(
         dists = _focei_obs_dists_batch(dm, info, θ_re, b0, const_cache, ll_cache)
         isempty(dists) && continue
         for d in dists
-            _focei_is_supported(d) ||
-                error(
-                "FOCEI does not support outcome distribution $(typeof(d)). " *
-                    "Supported families: Normal, LogNormal, Laplace, Cauchy, Exponential, " *
-                    "Poisson, Bernoulli, Binomial, Geometric, Gamma, Beta, MvNormal. " *
-                    "Use Laplace for hidden-Markov / unsupported outcomes."
-            )
+            _focei_is_supported(d) || return d
         end
     end
     return nothing

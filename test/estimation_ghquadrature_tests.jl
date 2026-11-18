@@ -981,6 +981,12 @@ const _GHQ_MAP_RES_GHQ2 = fit_model(
         @test uq isa NoLimits.UQResult
         cia = get_uq_intervals(uq)
         @test hasproperty(cia.lower, :a)
+        # :forwarddiff stays available for GHQuadrature (AD follows its adaptive mode)
+        uq_ad = compute_uq(
+            _GHQ_MAP_RES_GHQ2; method = :wald,
+            hessian_backend = :forwarddiff, pseudo_inverse = true
+        )
+        @test hasproperty(get_uq_intervals(uq_ad).lower, :a)
     end
 end  # @testset "GHQuadrature Wald UQ"
 

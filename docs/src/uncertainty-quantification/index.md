@@ -47,10 +47,10 @@ Key options:
 
 - `vcov`: `:hessian` or `:sandwich`
 - `pseudo_inverse`: use pseudo-inverse if direct inversion is unstable
-- `hessian_backend`: `:auto`, `:forwarddiff`, or `:fd_gradient`
+- `hessian_backend`: `:auto`, `:forwarddiff`, or `:fd_gradient`. `:forwarddiff` is available only for `MLE`, `MAP`, `Pooled`, `PooledMap` and `GHQuadrature` fits; the Laplace/FOCEI Hessians use finite differences of the exact marginal gradient
 - finite-difference controls: `fd_abs_step`, `fd_rel_step`, `fd_max_tries`
 
-For `MCEM` and `SAEM` source fits, the Wald backend also accepts random-effects approximation controls via `re_approx` and `re_approx_method`.
+For `MCEM` and `SAEM` source fits, the Wald backend also accepts random-effects approximation controls via `re_approx` and `re_approx_method`; the default approximation is `FOCEI` (`Laplace` for outcomes without a closed-form Fisher information).
 
 ### Chain (`method=:chain`)
 

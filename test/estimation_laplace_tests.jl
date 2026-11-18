@@ -171,6 +171,30 @@ function _outer_grad_matches_fd_t(dm, method, hmode; rtol, h = 3.0e-4)
     return @test isapprox(collect(g_free), fd; rtol = rtol)
 end
 
+# ForwardDiff Jacobian of the analytic outer gradient (an outer Dual pass, so the Float64 mode
+# b* needs its implicit derivative db*/dθ) vs central differences of the Float64 gradient. With
+# h = 1e-4 and the inner mode solved to 1e-10 the FD error is ~1e-6 relative (observed).
+struct _GradJacTag end
+function _grad_jacobian_matches_fd(method, dm; rtol = 1.0e-4)
+    θ0 = get_θ0_untransformed(NoLimits.get_model(dm).fixed.fixed) .* 1.05
+    ax, x0 = getaxes(θ0), collect(θ0)
+    gf(x) = collect(NoLimits.objective_and_gradient(method, dm, ComponentArray(x, ax))[2])
+    # one tag for every call, so the Dual path compiles once per DataModel
+    cfg = ForwardDiff.JacobianConfig(gf, x0, ForwardDiff.Chunk(x0), ForwardDiff.Tag(_GradJacTag(), Float64))
+    r = ForwardDiff.jacobian!(ForwardDiff.DiffResults.JacobianResult(x0), gf, x0, cfg, Val(false))
+    J = ForwardDiff.DiffResults.jacobian(r)
+    Jfd = reduce(
+        hcat, map(eachindex(x0)) do j
+            h = 1.0e-4 * max(1.0, abs(x0[j]))
+            e = h .* (eachindex(x0) .== j)
+            (gf(x0 .+ e) .- gf(x0 .- e)) ./ (2h)
+        end
+    )
+    @test ForwardDiff.DiffResults.value(r) ≈ gf(x0) rtol = 1.0e-10
+    @test J ≈ Jfd rtol = rtol
+    return @test norm(J - J') <= 1.0e-10 * norm(J)
+end
+
 @testset "outer gradient matches FD at the defaults (nonlinear in η)" begin
     # Nonlinear in η, so the Fisher-information curvature genuinely differs from the exact
     # Hessian (~4-6% here). Every pre-existing gradient check uses a model LINEAR in η with a
@@ -210,6 +234,10 @@ end
         dm, NoLimits.FOCEI(interaction = false),
         NoLimits._FOCEIHess(false); rtol = 2.0e-3
     )
+    # ForwardDiff through the analytic gradient (Float64(::Dual) in the one-pass kernel before)
+    _grad_jacobian_matches_fd(NoLimits.Laplace(), dm)
+    _grad_jacobian_matches_fd(NoLimits.FOCEI(), dm)
+    _grad_jacobian_matches_fd(NoLimits.Laplace(), fx_ode_dm())
 end
 
 @testset "Laplace batching with constant RE levels" begin

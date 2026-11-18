@@ -183,6 +183,9 @@ end
         get_uq_intervals(uq; scale = :natural).lower
     @test_throws ErrorException compute_uq(res; method = "wlad", n_draws = 5)
     @test_throws ArgumentError get_uq_estimates(uq; scale = "nautral")
+    # :auto is :forwarddiff for MLE
+    uq_ad = compute_uq(res; method = :wald, hessian_backend = :forwarddiff, n_draws = 30, rng = Random.Xoshiro(1))
+    @test get_uq_vcov(uq_ad) == get_uq_vcov(uq)
 end
 
 @testset "UQ Wald for MAP" begin
@@ -193,6 +196,8 @@ end
     @test get_uq_source_method(uq) == :map
     @test get_uq_parameter_names(uq) == [:a, :σ]
     @test size(get_uq_vcov(uq)) == (2, 2)
+    uq_ad = compute_uq(res; method = :wald, hessian_backend = :forwarddiff, n_draws = 30, rng = Random.Xoshiro(3))
+    @test get_uq_vcov(uq_ad) == get_uq_vcov(uq)
 end
 
 @testset "UQ chain for MCMC" begin
@@ -295,6 +300,8 @@ end
     @test haskey(d, :inactive_fixed_effects_held_constant)
     @test d.hessian_reduced
     @test d.inactive_fixed_effects_held_constant
+    # AD of the Laplace objective holds the modes fixed: rejected at the entry point
+    @test_throws ArgumentError compute_uq(res; method = :wald, hessian_backend = :forwarddiff)
 end
 
 function _uq_psd_re_model(scale::Symbol)
@@ -649,8 +656,40 @@ end
     @test get_uq_parameter_names(uq) == [:a, :ω]
     @test size(get_uq_vcov(uq)) == (2, 2)
     d = get_uq_diagnostics(uq)
-    @test d.approximation_method == :laplace
+    @test d.approximation_method == :focei      # default approximation
     @test_throws ErrorException compute_uq(res; method = :wald, re_approx = :invalid)
+    @test_throws ArgumentError compute_uq(res; method = :wald, hessian_backend = :forwarddiff)
+    for kw in ((; re_approx = :laplace), (; re_approx_method = NoLimits.Laplace()))
+        @test get_uq_diagnostics(compute_uq(res; method = :wald, n_draws = 40, kw...)).approximation_method == :laplace
+    end
+    @test get_uq_diagnostics(compute_uq(res; method = :wald, n_draws = 40, re_approx_method = NoLimits.FOCEI())).approximation_method == :focei
+
+    # FOCEI Wald Hessian vs second differences of the FOCEI marginal objective at the MCEM
+    # estimate (modes re-solved per evaluation; h = 1e-3 as in the db*/dθ testset below)
+    H_uq = inv(get_uq_vcov(uq; scale = :transformed))
+    m = NoLimits.FOCEI()
+    fe = NoLimits.get_fixed(get_model(_UQ_RE_DM))
+    itr = NoLimits.get_inverse_transform(fe)
+    θt = NoLimits.get_transform(fe)(NoLimits.get_params(res; scale = :untransformed))
+    io = NoLimits._resolve_inner_options(m.inner, _UQ_RE_DM)
+    _, bi, cc = NoLimits._build_re_batch_infos(_UQ_RE_DM, NamedTuple())
+    llc = NoLimits.build_ll_cache(_UQ_RE_DM; force_saveat = true)
+    obj(x) = NoLimits._laplace_objective_only(
+        _UQ_RE_DM, bi, itr(ComponentArray(x, getaxes(θt))), cc, llc,
+        NoLimits._init_laplace_eval_cache(length(bi), Float64);
+        inner = io, hessian = m.hessian, cache_opts = NoLimits.LaplaceCacheOptions(0.0),
+        multistart = NoLimits._resolve_multistart_options(m.multistart, io),
+        rng = Xoshiro(0), serialization = NoLimits.EnsembleSerial(), hmode = NoLimits._FOCEIHess(true)
+    )
+    act = [findfirst(==(s), collect(propertynames(θt))) for s in (:a, :ω)]
+    h, x0, n = 1.0e-3, collect(θt), length(θt)
+    H_ref = [
+        begin
+                e_i = h * (1:n .== i); e_j = h * (1:n .== j)
+                (obj(x0 + e_i + e_j) - obj(x0 + e_i - e_j) - obj(x0 - e_i + e_j) + obj(x0 - e_i - e_j)) / (4h^2)
+            end for i in act, j in act
+    ]
+    @test H_uq ≈ H_ref rtol = 2.0e-4
 end
 
 # ── :logit scale UQ helpers ──────────────────────────────────────────────────
