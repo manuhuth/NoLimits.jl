@@ -2499,14 +2499,14 @@ end
 # weight times the individual's conditional-likelihood weight (RE statistics carry only the
 # batch weight).
 function _saem_weight_outcome_stat(st, dm::DataModel, i::Int)
-    get_weights(dm) === nothing && get_likelihood_weights(dm) === nothing && return st
-    w = _ind_weight(dm, i) * _ind_lik_weight(dm, i)
+    _no_weights(dm) && return st
+    w = _ind_wv(dm, i)
     return (family = st.family, s1 = w * st.s1, s2 = w * st.s2, ss = w * st.ss, n = w * st.n)
 end
 
 function _saem_weight_hmm_stat(st, dm::DataModel, i::Int)
-    get_weights(dm) === nothing && get_likelihood_weights(dm) === nothing && return st
-    w = _ind_weight(dm, i) * _ind_lik_weight(dm, i)
+    _no_weights(dm) && return st
+    w = _ind_wv(dm, i)
     return (family = st.family, target = st.target, sum_w = w .* st.sum_w, sum_wy = w .* st.sum_wy)
 end
 

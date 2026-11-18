@@ -633,10 +633,12 @@ function _focei_obs_weights_batch(w::AbstractVector, dm::DataModel, batch_info::
     return out
 end
 @inline _focei_obs_scale(::Nothing, j::Int, x) = x
+# H += α Jjᵀ Tj; a zero weight skips the product (its information may be non-finite)
+@inline _focei_accum!(H, Jj, Tj, ::Nothing) = mul!(H, transpose(Jj), Tj, true, true)
+@inline _focei_accum!(H, Jj, Tj, α) = iszero(α) ? H : mul!(H, transpose(Jj), Tj, α, true)
 @inline _focei_obs_scale(v::AbstractVector, j::Int, x) = iszero(v[j]) ? zero(x) : v[j] * x
-@inline _focei_obs_skip(::Nothing, j::Int) = false
-@inline _focei_obs_skip(v::AbstractVector, j::Int) = iszero(v[j])
-@inline _focei_obs_alpha(::Nothing, j::Int) = true
+# `nothing` keeps the literal `true` scale in `_focei_accum!` (a Bool argument would not)
+@inline _focei_obs_alpha(::Nothing, j::Int) = nothing
 @inline _focei_obs_alpha(v::AbstractVector, j::Int) = v[j]
 
 function _focei_data_term(J, dists_b::Vector, dists_m, interaction::Bool, T::Type, vobs = nothing)
@@ -688,10 +690,6 @@ function _focei_data_term(J, dists_b::Vector, dists_m, interaction::Bool, T::Typ
     tmp = Matrix{T}(undef, size(J, 1), nb)
     offset = 0
     for (j, d) in enumerate(dists_b)
-        if _focei_obs_skip(vobs, j)
-            offset += _focei_paramcount(d)
-            continue
-        end
         dmj = dists_m === nothing ? nothing : dists_m[j]
         offset = _focei_data_term_obs!(
             H, tmp, J, offset, d, dmj, interaction, _focei_obs_alpha(vobs, j)
@@ -705,7 +703,7 @@ end
 # dispatch costs more than the dispatch itself).
 function _focei_data_term_obs!(
         H::Matrix, tmp::Matrix, J::Matrix, offset::Int, d, dmj, interaction::Bool,
-        α = true
+        α = nothing
     )
     dj = _focei_paramcount(d)
     Jj = view(J, (offset + 1):(offset + dj), :)
@@ -732,7 +730,7 @@ function _focei_data_term_obs!(
     else
         mul!(Tj, _focei_expected_information(d), Jj)
     end
-    mul!(H, transpose(Jj), Tj, α, true)
+    _focei_accum!(H, Jj, Tj, α)
     return offset + dj
 end
 

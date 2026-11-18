@@ -110,7 +110,7 @@ function _rebuild_dm(dm_ref::DataModel, rows::Vector{Int})
         evid_col = cfg.evid_col, amt_col = cfg.amt_col,
         rate_col = cfg.rate_col, cmt_col = cfg.cmt_col, t0 = cfg.t0,
         serialization = cfg.serialization, weights = cfg.weights_col,
-        likelihood_weights = cfg.likelihood_weights_col
+        likelihood_weights = _lik_weights_col(dm_ref)
     )
 end
 
@@ -882,7 +882,7 @@ function fit_cv(
         insertcols!(obs_df, 1, :fold => fill(f, nrow(obs_df)))
         if use_weights && nrow(obs_df) > 0
             obs_df[!, :weight] = Float64[
-                (k = dm_test.id_index[id]; _ind_weight(dm_test, k) * _ind_lik_weight(dm_test, k))
+                _ind_wv(dm_test, dm_test.id_index[id])
                     for id in obs_df[!, :individual]
             ]
         end

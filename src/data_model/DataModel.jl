@@ -50,8 +50,6 @@ algorithm, save-time mode, and the integration start time.
 - `saveat_mode::Symbol`: `:dense` or `:saveat` (resolved from `:auto` at construction time).
 - `t0::T`: integration start time, or `nothing` to start at each individual's first data time.
 - `weights_col::Union{Nothing, Symbol}`: per-individual likelihood weight column, or `nothing`.
-- `likelihood_weights_col::Union{Nothing, Symbol}`: per-individual conditional-likelihood
-  weight column, or `nothing`.
 """
 struct DataModelConfig{S, T}
     primary_id::Symbol
@@ -65,7 +63,6 @@ struct DataModelConfig{S, T}
     saveat_mode::Symbol
     t0::T
     weights_col::Union{Nothing, Symbol}
-    likelihood_weights_col::Union{Nothing, Symbol}
 end
 
 struct RowGroups{R, O}
@@ -195,7 +192,7 @@ struct DataModel{M, D, I, P, C, K, G, R, W}
     re_group_info::R
     # Per-individual likelihood weights, or `nothing` (unweighted).
     weights::Union{Nothing, Vector{Float64}}
-    # Per-individual conditional-likelihood weights (`Vector{Float64}`), or `nothing`. A type
+    # Per-individual conditional-likelihood weights (`_LikWeights`), or `nothing`. A type
     # parameter so the unweighted likelihood compiles to the unweighted code.
     likelihood_weights::W
     # Lazily-computed closed-form eligibility (see `get_closed_form_plan`). Mutable
@@ -1734,7 +1731,7 @@ function DataModel(
     saveat_mode = saveat_mode == :auto ? :saveat : saveat_mode
     config = DataModelConfig(
         primary_id, time_col, evid_col, amt_col, rate_col,
-        cmt_col, obs_cols, serialization, saveat_mode, t0, weights_col, lik_weights_col
+        cmt_col, obs_cols, serialization, saveat_mode, t0, weights_col
     )
     _validate_schema(model, df, config)
     _validate_observed_markov_coarsed_usage(model, df, config)
@@ -1857,8 +1854,12 @@ function DataModel(
     row_groups = RowGroups(groups, obs_groups)
     re_group_info = _build_re_group_info(model, df, individuals, row_groups)
     ind_weights = _build_individual_weights(df, weights_col, groups, keys_sorted, pairing, primary_id)
-    lik_weights = _build_individual_weights(
-        df, lik_weights_col, groups, keys_sorted, pairing, primary_id; batch_equal = false
+    lik_weights = lik_weights_col === nothing ? nothing :
+        _LikWeights(
+        lik_weights_col,
+        _build_individual_weights(
+            df, lik_weights_col, groups, keys_sorted, pairing, primary_id; batch_equal = false
+        )
     )
     return DataModel(
         model, df, individuals, pairing, config, id_index, row_groups,
@@ -2052,15 +2053,36 @@ get_weights(dm::DataModel) = dm.weights
 Return the per-individual conditional-likelihood weights (in individual order), or
 `nothing` when the `DataModel` was built without a `likelihood_weights` column.
 """
-get_likelihood_weights(dm::DataModel) = dm.likelihood_weights
+get_likelihood_weights(dm::DataModel) = _lik_values(dm.likelihood_weights)
+
+# Likelihood weights with their column name. Kept out of `DataModelConfig` so an unweighted
+# DataModel has the same memory layout (and compiled code) as one built without the keyword.
+struct _LikWeights
+    col::Symbol
+    v::Vector{Float64}
+end
+_lik_values(::Nothing) = nothing
+_lik_values(w::_LikWeights) = w.v
+_lik_weights_col(dm::DataModel) = _lik_col(dm.likelihood_weights)
+_lik_col(::Nothing) = nothing
+_lik_col(w::_LikWeights) = w.col
 
 # Conditional log-likelihood ll of individual i raised to its likelihood weight. The
 # `Nothing` method is the identity, so unweighted models compile to the unweighted code.
 # Weight 0 gives 0 also for ll = -Inf (0 * -Inf is NaN).
 @inline _lik_weight(::Nothing, i::Integer, ll) = ll
-@inline _lik_weight(w::AbstractVector, i::Integer, ll) = iszero(w[i]) ? zero(ll) : w[i] * ll
+@inline _lik_weight(w::_LikWeights, i::Integer, ll) = iszero(w.v[i]) ? zero(ll) : w.v[i] * ll
+# `get_weights(dm) === nothing` and no likelihood weights; by dispatch, so the unweighted
+# method compiles to the plain `weights` check.
+@inline _no_weights(dm::DataModel{M, D, I, P, C, K, G, R, Nothing}) where {M, D, I, P, C, K, G, R} =
+    get_weights(dm) === nothing
+@inline _no_weights(::DataModel) = false
+# batch weight times likelihood weight of individual i (the batch weight alone when unweighted)
+@inline _ind_wv(dm::DataModel{M, D, I, P, C, K, G, R, Nothing}, i::Integer) where {M, D, I, P, C, K, G, R} =
+    _ind_weight(dm, i)
+@inline _ind_wv(dm::DataModel, i::Integer) = _ind_weight(dm, i) * _ind_lik_weight(dm, i)
 @inline _ind_lik_weight(dm::DataModel, i::Integer) =
-    dm.likelihood_weights === nothing ? 1.0 : dm.likelihood_weights[i]
+    dm.likelihood_weights === nothing ? 1.0 : dm.likelihood_weights.v[i]
 
 # The DataModel the random-effect samplers of SAEM/MCEM (and the posterior/predictive
 # draws) evaluate: likelihood weights act on the M-step only, so the draws target the

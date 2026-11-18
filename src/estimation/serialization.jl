@@ -209,7 +209,7 @@ function _build_saved_config(dm::DataModel)
         _ensemble_to_symbol(cfg.serialization),
         cfg.t0 === nothing ? nothing : float(cfg.t0),
         cfg.weights_col,
-        cfg.likelihood_weights_col
+        _lik_weights_col(dm)
     )
 end
 
