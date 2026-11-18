@@ -2289,7 +2289,7 @@ function _sample_mcmc_bstars_raw(
                 continue
             end
             samples_mat, lastp, lastb = _mcem_sample_batch(
-                dm, info, θu, const_cache, ll_cache_local, sampler, sweep_kwargs,
+                _sampling_dm(dm), info, θu, const_cache, ll_cache_local, sampler, sweep_kwargs,
                 batch_rngs[bi], re_names, warm_start, last_params[bi]
             )
             last_params[bi] = lastp
@@ -4244,9 +4244,13 @@ end
 # @formulas or in the DE right-hand side — into the same -Inf a failed solve gives, rather
 # than an exception that kills the fit (the SAEM/MCEM E-step has no handler of its own).
 # The guard sits in this thin wrapper, not around the body, so the hot path is untouched.
+# Likelihood weights (`DataModel(...; likelihood_weights)`) are applied here, so every
+# objective sees p(y_i | η, θ)^v_i; `_lik_weight` is the identity for unweighted models.
 function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache)
     try
-        return __loglikelihood_individual(dm, idx, θ, η_ind, cache)
+        return _lik_weight(
+            dm.likelihood_weights, idx, __loglikelihood_individual(dm, idx, θ, η_ind, cache)
+        )
     catch err
         _is_numeric_error(err) || rethrow(err)
         if !Threads.atomic_cas!(_WARNED_NUMERIC_ERROR, false, true)
@@ -4256,7 +4260,7 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
                 "check those domains in @formulas / @DifferentialEquation. " *
                 "Warned once per fit."
         end
-        return -Inf
+        return _lik_weight(dm.likelihood_weights, idx, -Inf)
     end
 end
 

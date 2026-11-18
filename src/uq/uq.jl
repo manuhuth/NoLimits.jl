@@ -163,7 +163,10 @@ function compute_uq(
     if backend == :wald
         if vcov == :auto
             dm_w = get_data_model(res)
-            vcov = (dm_w !== nothing && get_weights(dm_w) !== nothing) ? :sandwich : :hessian
+            vcov = (
+                    dm_w !== nothing &&
+                    (get_weights(dm_w) !== nothing || get_likelihood_weights(dm_w) !== nothing)
+                ) ? :sandwich : :hessian
         end
         vcov in (:hessian, :sandwich) ||
             error("For Wald UQ, vcov must be :hessian or :sandwich.")

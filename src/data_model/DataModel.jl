@@ -15,6 +15,7 @@ export get_time_col
 export get_obs_cols
 export get_evid_col
 export get_weights
+export get_likelihood_weights
 export get_t0
 export get_series
 export get_const_cov
@@ -49,6 +50,8 @@ algorithm, save-time mode, and the integration start time.
 - `saveat_mode::Symbol`: `:dense` or `:saveat` (resolved from `:auto` at construction time).
 - `t0::T`: integration start time, or `nothing` to start at each individual's first data time.
 - `weights_col::Union{Nothing, Symbol}`: per-individual likelihood weight column, or `nothing`.
+- `likelihood_weights_col::Union{Nothing, Symbol}`: per-individual conditional-likelihood
+  weight column, or `nothing`.
 """
 struct DataModelConfig{S, T}
     primary_id::Symbol
@@ -62,6 +65,7 @@ struct DataModelConfig{S, T}
     saveat_mode::Symbol
     t0::T
     weights_col::Union{Nothing, Symbol}
+    likelihood_weights_col::Union{Nothing, Symbol}
 end
 
 struct RowGroups{R, O}
@@ -169,7 +173,7 @@ end
 _cf_f64keys(d) = Dict{Float64, valtype(d)}(Float64(k) => v for (k, v) in d)
 
 """
-    DataModel{M, D, I, P, C, K, G, R}
+    DataModel{M, D, I, P, C, K, G, R, W}
 
 Top-level struct pairing a [`Model`](@ref) with a dataset. Produced by the
 [`DataModel`](@ref) constructor and passed to [`fit_model`](@ref) and plotting functions.
@@ -180,7 +184,7 @@ Use accessor functions rather than accessing fields directly:
 [`get_primary_id`](@ref), [`get_row_groups`](@ref), [`get_re_group_info`](@ref),
 [`get_re_indices`](@ref).
 """
-struct DataModel{M, D, I, P, C, K, G, R}
+struct DataModel{M, D, I, P, C, K, G, R, W}
     model::M
     df::D
     individuals::I
@@ -191,6 +195,9 @@ struct DataModel{M, D, I, P, C, K, G, R}
     re_group_info::R
     # Per-individual likelihood weights, or `nothing` (unweighted).
     weights::Union{Nothing, Vector{Float64}}
+    # Per-individual conditional-likelihood weights (`Vector{Float64}`), or `nothing`. A type
+    # parameter so the unweighted likelihood compiles to the unweighted code.
+    likelihood_weights::W
     # Lazily-computed closed-form eligibility (see `get_closed_form_plan`). Mutable
     # cache slot only; the DataModel is otherwise immutable.
     closed_form_plan::Base.RefValue{Union{Nothing, ClosedFormPlan}}
@@ -1668,6 +1675,15 @@ observation counts, and saveat-mode resolution.
   must be constant within each individual, finite and nonnegative with at least one
   positive value, and equal within each batch of individuals that share a random-effect
   level. Weights are not normalized. See [`get_weights`](@ref).
+- `likelihood_weights::Union{Nothing, Symbol} = nothing`: column of per-individual
+  conditional-likelihood weights `v_i`. The objective becomes
+  `Σ_b w_b log ∫ Π_{i∈b} p(y_i | η, θ)^{v_i} p(η | θ) dη`: each individual's conditional
+  likelihood is raised to the power `v_i` inside the random-effects integral, the
+  random-effect density is not weighted. Unlike `weights`, the values may differ between
+  individuals that share a random-effect level. The column must be constant within each
+  individual, finite and nonnegative with at least one positive value. Both keywords can be
+  combined. SAEM/MCEM apply `v_i` in the M-step only, MCMC rejects it. See
+  [`get_likelihood_weights`](@ref).
 
 Every column keyword also accepts a `String` (`time_col = "TIME"`), which is convenient
 from the Python and R bindings.
@@ -1683,7 +1699,8 @@ function DataModel(
         cmt_col::Union{Symbol, AbstractString} = :CMT,
         t0::Union{Nothing, Real} = 0.0,
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(),
-        weights::Union{Nothing, Symbol, AbstractString} = nothing
+        weights::Union{Nothing, Symbol, AbstractString} = nothing,
+        likelihood_weights::Union{Nothing, Symbol, AbstractString} = nothing
     )
     model isa Model ||
         error("DataModel expects a Model built with @Model as its first argument; got $(typeof(model)). Check the argument order: DataModel(model, df; ...).")
@@ -1695,6 +1712,7 @@ function DataModel(
     rate_col = _as_symbol(rate_col)
     cmt_col = _as_symbol(cmt_col)
     weights_col = _as_symbol(weights)
+    lik_weights_col = _as_symbol(likelihood_weights)
     # A non-finite integration start otherwise reaches the ODE solver internals (#220).
     (t0 === nothing || isfinite(t0)) ||
         error("t0 must be a finite time or `nothing`; got $(t0).")
@@ -1716,7 +1734,7 @@ function DataModel(
     saveat_mode = saveat_mode == :auto ? :saveat : saveat_mode
     config = DataModelConfig(
         primary_id, time_col, evid_col, amt_col, rate_col,
-        cmt_col, obs_cols, serialization, saveat_mode, t0, weights_col
+        cmt_col, obs_cols, serialization, saveat_mode, t0, weights_col, lik_weights_col
     )
     _validate_schema(model, df, config)
     _validate_observed_markov_coarsed_usage(model, df, config)
@@ -1839,16 +1857,21 @@ function DataModel(
     row_groups = RowGroups(groups, obs_groups)
     re_group_info = _build_re_group_info(model, df, individuals, row_groups)
     ind_weights = _build_individual_weights(df, weights_col, groups, keys_sorted, pairing, primary_id)
+    lik_weights = _build_individual_weights(
+        df, lik_weights_col, groups, keys_sorted, pairing, primary_id; batch_equal = false
+    )
     return DataModel(
         model, df, individuals, pairing, config, id_index, row_groups,
-        re_group_info, ind_weights, Base.RefValue{Union{Nothing, ClosedFormPlan}}(nothing),
+        re_group_info, ind_weights, lik_weights, Base.RefValue{Union{Nothing, ClosedFormPlan}}(nothing),
         Base.RefValue{Any}(missing)
     )
 end
 
-function _build_individual_weights(df, col, groups, keys_sorted, pairing, primary_id)
+function _build_individual_weights(
+        df, col, groups, keys_sorted, pairing, primary_id; batch_equal::Bool = true
+    )
     col === nothing && return nothing
-    _require_col(df, col, "weights")
+    _require_col(df, col, batch_equal ? "weights" : "likelihood_weights")
     vals = _get_col(df, col)
     _check_missing(vals, col)
     eltype(vals) <: Real ||
@@ -1865,6 +1888,7 @@ function _build_individual_weights(df, col, groups, keys_sorted, pairing, primar
         w[i] = wi
     end
     any(>(0), w) || error("Weights column $(col) has no positive weight; at least one individual needs weight > 0.")
+    batch_equal || return w
     # Individuals sharing a random-effect level form one marginal-likelihood term,
     # which can only carry one weight.
     for b in pairing.batches
@@ -2021,6 +2045,33 @@ get_weights(dm::DataModel) = dm.weights
 # Weight of individual `i` / of a batch of individuals (batches carry one weight).
 @inline _ind_weight(dm::DataModel, i::Integer) = dm.weights === nothing ? 1.0 : dm.weights[i]
 @inline _batch_weight(dm::DataModel, inds) = dm.weights === nothing ? 1.0 : dm.weights[first(inds)]
+
+"""
+    get_likelihood_weights(dm::DataModel) -> Union{Nothing, Vector{Float64}}
+
+Return the per-individual conditional-likelihood weights (in individual order), or
+`nothing` when the `DataModel` was built without a `likelihood_weights` column.
+"""
+get_likelihood_weights(dm::DataModel) = dm.likelihood_weights
+
+# Conditional log-likelihood ll of individual i raised to its likelihood weight. The
+# `Nothing` method is the identity, so unweighted models compile to the unweighted code.
+# Weight 0 gives 0 also for ll = -Inf (0 * -Inf is NaN).
+@inline _lik_weight(::Nothing, i::Integer, ll) = ll
+@inline _lik_weight(w::AbstractVector, i::Integer, ll) = iszero(w[i]) ? zero(ll) : w[i] * ll
+@inline _ind_lik_weight(dm::DataModel, i::Integer) =
+    dm.likelihood_weights === nothing ? 1.0 : dm.likelihood_weights[i]
+
+# The DataModel the random-effect samplers of SAEM/MCEM (and the posterior/predictive
+# draws) evaluate: likelihood weights act on the M-step only, so the draws target the
+# unweighted conditional posterior.
+_sampling_dm(dm::DataModel{M, D, I, P, C, K, G, R, Nothing}) where {M, D, I, P, C, K, G, R} = dm
+function _sampling_dm(dm::DataModel)
+    return DataModel(
+        dm.model, dm.df, dm.individuals, dm.pairing, dm.config, dm.id_index, dm.row_groups,
+        dm.re_group_info, dm.weights, nothing, dm.closed_form_plan, dm.state_layout
+    )
+end
 
 """
     get_time_col(dm::DataModel) -> Symbol

@@ -615,7 +615,29 @@ _focei_diag_information(d::Binomial) = (d.n * inv(d.p * (one(d.p) - d.p)),)
 _focei_diag_information(d::Geometric) = (inv(d.p * d.p * (one(d.p) - d.p)),)
 _focei_diag_information(::Any) = nothing
 
-function _focei_data_term(J, dists_b::Vector, dists_m, interaction::Bool, T::Type)
+# Per-observation likelihood weights in `_focei_obs_values_batch` order (the individual's
+# v_i, repeated over its observations), or `nothing` for an unweighted DataModel. The
+# expected information and the score of v·log p are v·ℐ and v·s.
+@inline _focei_obs_weights_batch(dm::DataModel, batch_info::REBatchInfo) =
+    _focei_obs_weights_batch(get_likelihood_weights(dm), dm, batch_info)
+_focei_obs_weights_batch(::Nothing, dm::DataModel, batch_info::REBatchInfo) = nothing
+function _focei_obs_weights_batch(w::AbstractVector, dm::DataModel, batch_info::REBatchInfo)
+    out = Float64[]
+    ys = Any[]
+    cols = _focei_cols_val(get_obs_cols(dm))
+    for i in get_inds(batch_info)
+        obs_series = get_obs(get_series(get_individuals(dm)[i]))
+        _focei_push_ys_ind!(ys, obs_series, length(get_obs_rows(get_row_groups(dm))[i]), cols)
+        append!(out, Iterators.repeated(w[i], length(ys) - length(out)))
+    end
+    return out
+end
+@inline _focei_obs_scale(::Nothing, j::Int, x) = x
+@inline _focei_obs_scale(v::AbstractVector, j::Int, x) = iszero(v[j]) ? zero(x) : v[j] * x
+@inline _focei_obs_alpha(::Nothing, j::Int) = true
+@inline _focei_obs_alpha(v::AbstractVector, j::Int) = v[j]
+
+function _focei_data_term(J, dists_b::Vector, dists_m, interaction::Bool, T::Type, vobs = nothing)
     nb = size(J, 2)
     isempty(dists_b) && return zeros(T, nb, nb)
     # Diagonal-ℐ fast path. FOCE freezes dispersion parameters by zeroing their
@@ -634,7 +656,7 @@ function _focei_data_term(J, dists_b::Vector, dists_m, interaction::Bool, T::Typ
                 break
             end
             for k in eachindex(di)
-                w[offset + k] = T(di[k])
+                w[offset + k] = _focei_obs_scale(vobs, j, T(di[k]))
             end
             offset += length(di)
         else
@@ -646,7 +668,7 @@ function _focei_data_term(J, dists_b::Vector, dists_m, interaction::Bool, T::Typ
                 break
             end
             for k in eachindex(di)
-                w[offset + k] = k in disp ? zero(T) : T(di[k])
+                w[offset + k] = k in disp ? zero(T) : _focei_obs_scale(vobs, j, T(di[k]))
             end
             offset += length(di)
         end
@@ -665,7 +687,9 @@ function _focei_data_term(J, dists_b::Vector, dists_m, interaction::Bool, T::Typ
     offset = 0
     for (j, d) in enumerate(dists_b)
         dmj = dists_m === nothing ? nothing : dists_m[j]
-        offset = _focei_data_term_obs!(H, tmp, J, offset, d, dmj, interaction)
+        offset = _focei_data_term_obs!(
+            H, tmp, J, offset, d, dmj, interaction, _focei_obs_alpha(vobs, j)
+        )
     end
     return H
 end
@@ -674,9 +698,11 @@ end
 # are built inside, where every type is known (boxing a SubArray through dynamic
 # dispatch costs more than the dispatch itself).
 function _focei_data_term_obs!(
-        H::Matrix, tmp::Matrix, J::Matrix, offset::Int, d, dmj, interaction::Bool
+        H::Matrix, tmp::Matrix, J::Matrix, offset::Int, d, dmj, interaction::Bool,
+        α = true
     )
     dj = _focei_paramcount(d)
+    iszero(α) && return offset + dj
     Jj = view(J, (offset + 1):(offset + dj), :)
     Tj = view(tmp, 1:dj, :)
     disp = _focei_dispersion_indices(d)
@@ -701,7 +727,7 @@ function _focei_data_term_obs!(
     else
         mul!(Tj, _focei_expected_information(d), Jj)
     end
-    mul!(H, transpose(Jj), Tj, true, true)
+    mul!(H, transpose(Jj), Tj, α, true)
     return offset + dj
 end
 
@@ -750,7 +776,10 @@ function _focei_negH_batch_impl(
     )
     parts === nothing && return fill(convert(T, NaN), nb, nb)
     dists_b, J, dists_m = parts
-    Hdata = J === nothing ? zeros(T, nb, nb) : _focei_data_term(J, dists_b, dists_m, interaction, T)
+    Hdata = J === nothing ? zeros(T, nb, nb) :
+        _focei_data_term(
+            J, dists_b, dists_m, interaction, T, _focei_obs_weights_batch(dm, batch_info)
+        )
     return Hdata .+ _focei_prior_negH(dm, batch_info, θ_re, b, const_cache, cache, tctx, own)
 end
 
@@ -868,13 +897,13 @@ end
 # grad += Σⱼ Jⱼᵀ sⱼ; `false` when a family has no closed-form score. Function barrier: the
 # caller sees `ys` and `grad` abstractly typed, which made every per-observation score and
 # broadcast a dynamic dispatch with heap allocations (dual-typed in the one-pass kernel).
-function _focei_add_scores!(grad, dists_b, ys, J)
+function _focei_add_scores!(grad, dists_b, ys, J, vobs = nothing)
     offset = 0
     for j in eachindex(dists_b)
         s = _focei_score(dists_b[j], ys[j])
         s === nothing && return false
         for k in eachindex(s)
-            grad .+= s[k] .* view(J, offset + k, :)
+            grad .+= _focei_obs_scale(vobs, j, s[k]) .* view(J, offset + k, :)
         end
         offset += length(s)
     end
@@ -912,8 +941,9 @@ function _focei_grad_negH_batch(
         if J !== nothing
             ys = _focei_obs_values_batch(dm, batch_info)
             length(ys) == length(dists_b) || return nothing
-            _focei_add_scores!(grad, dists_b, ys, J) || (grad = nothing)
-            Hdata = _focei_data_term(J, dists_b, dists_m, interaction, T)
+            vobs = _focei_obs_weights_batch(dm, batch_info)
+            _focei_add_scores!(grad, dists_b, ys, J, vobs) || (grad = nothing)
+            Hdata = _focei_data_term(J, dists_b, dists_m, interaction, T, vobs)
         end
         return (grad, Hdata .+ _focei_prior_negH(dm, batch_info, θ_re, b, const_cache, cache, tctx, own))
     catch err

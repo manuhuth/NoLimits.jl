@@ -1539,3 +1539,127 @@ end
         @test fr.test_loglikelihood ≈ sum(s.weight .* s.loglikelihood)
     end
 end
+
+@testset "likelihood_weights: power conditional likelihood inside the integral (#434)" begin
+    ser = NoLimits.EnsembleSerial()
+    og = NoLimits.objective_and_gradient
+    # Subjects nested in experiments; ID differs from both grouping columns, so a copy of an
+    # individual under a new ID shares all of its random-effect levels.
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            ω_e = RealNumber(0.5, scale = :log)
+            ω_s = RealNumber(0.3, scale = :log)
+            σ = RealNumber(0.4, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η_e = RandomEffect(Normal(0.0, ω_e); column = :EXP)
+            η_s = RandomEffect(Normal(0.0, ω_s); column = :SUBJ)
+        end
+        @formulas begin
+            y ~ Normal(a + η_e + η_s + 0.2 * t, σ)
+        end
+    end
+    ids = repeat(1:4, inner = 3)
+    df = DataFrame(
+        ID = ids, EXP = [i <= 2 ? "A" : "B" for i in ids], SUBJ = ["s$(i)" for i in ids],
+        t = repeat([0.0, 1.0, 2.0], 4),
+        y = [1.1, 1.4, 1.5, 0.7, 0.8, 1.2, 1.9, 2.0, 2.4, 1.6, 1.7, 2.3]
+    )
+    df.v1 = ones(nrow(df))
+    df.v = [i == 1 ? 2.0 : 1.0 for i in ids]
+    df.vz = [i == 2 ? 0.0 : 1.0 for i in ids]
+    df.vr = [0.5, 0.5, 0.5, 3.0, 3.0, 3.0, 1.5, 1.5, 1.5, 0.25, 0.25, 0.25]
+    dup = df[df.ID .== 1, :]
+    dup.ID .= 5
+    mk(d; kw...) = DataModel(model, d; primary_id = :ID, time_col = :t, kw...)
+    dm0, dm1 = mk(df), mk(df; likelihood_weights = :v1)
+    dmv, dmz, dmr = mk(df; likelihood_weights = "v"), mk(df; likelihood_weights = :vz), mk(df; likelihood_weights = :vr)
+    dmd, dmdel = mk(vcat(df, dup)), mk(df[df.ID .!= 2, :])
+    @test NoLimits.get_likelihood_weights(dm0) === nothing
+    @test NoLimits.get_likelihood_weights(dmr) == [0.5, 3.0, 1.5, 0.25]
+    @test NoLimits.get_weights(dmr) === nothing
+    θ = NoLimits.get_θ0_untransformed(NoLimits.get_fixed(model))
+
+    for m in (
+            NoLimits.Laplace(), NoLimits.FOCEI(), NoLimits.FOCEI(; interaction = false),
+            NoLimits.GHQuadrature(level = 2),
+        )
+        v0, g0 = og(m, dm0, θ)
+        v1, g1 = og(m, dm1, θ)
+        @test v1 == v0
+        @test collect(g1) == collect(g0)
+        vw, gw = og(m, dmv, θ)
+        vd, gd = og(m, dmd, θ)
+        @test vw ≈ vd rtol = 1.0e-10
+        @test collect(gw) ≈ collect(gd) rtol = 1.0e-8
+        vz, gz = og(m, dmz, θ)
+        vdl, gdl = og(m, dmdel, θ)
+        @test vz ≈ vdl rtol = 1.0e-10
+        @test collect(gz) ≈ collect(gdl) rtol = 1.0e-8
+        @test all(isfinite, collect(og(m, dmr, θ)[2]))
+    end
+    rr = fit_model(dmr, NoLimits.Laplace(; optim_kwargs = (maxiters = 3,)); serialization = ser)
+    @test isfinite(NoLimits.get_objective(rr))
+    @test NoLimits.get_loglikelihood(fit_model(dmv, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)); serialization = ser)) ≈
+        NoLimits.get_loglikelihood(fit_model(dmd, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)); serialization = ser)) rtol = 1.0e-6
+
+    # SAEM/MCEM: the E-step ignores the weights, the M-step applies them.
+    mc = NoLimits.MCEM(; maxiters = 2, progress = false)
+    draws0, _ = NoLimits.mcem_e_step(dm0, θ, mc, nothing; rng = Random.Xoshiro(1))
+    drawsr, _ = NoLimits.mcem_e_step(dmr, θ, mc, nothing; rng = Random.Xoshiro(1))
+    @test all(NoLimits.get_draws(a) == NoLimits.get_draws(b) for (a, b) in zip(draws0, drawsr))
+    q(d; kw...) = NoLimits.mcem_q_objective_and_gradient(d, θ, draws0; serialization = ser, kw...)
+    @test q(dm1)[1] == q(dm0)[1]
+    @test collect(q(dm1)[2]) == collect(q(dm0)[2])
+    @test q(dmv)[1] ≈ q(dmd)[1] rtol = 1.0e-12
+    @test collect(q(dmv)[2]) ≈ collect(q(dmd)[2]) rtol = 1.0e-10
+    @test !(q(dmr)[1] ≈ q(dm0)[1])
+    # closed form: σ² = Σ v_i SS_i / Σ v_i n_i, ω from the RE statistics without v
+    sv, sd = NoLimits.saem_sufficient_statistics(dmv, θ, draws0), NoLimits.saem_sufficient_statistics(dmd, θ, draws0)
+    @test sv.outcome.y.s1 ≈ sd.outcome.y.s1 rtol = 1.0e-12
+    @test sv.outcome.y.n ≈ sd.outcome.y.n
+    sr, s0 = NoLimits.saem_sufficient_statistics(dmr, θ, draws0), NoLimits.saem_sufficient_statistics(dm0, θ, draws0)
+    @test sr.re.η_s.second ≈ s0.re.η_s.second rtol = 1.0e-12
+    @test sr.outcome.y.n / s0.outcome.y.n ≈ sum([0.5, 3.0, 1.5, 0.25]) / 4
+    upd, _ = NoLimits.saem_closed_form_mstep(dmr, sr, nothing, θ, 1.0)
+    θcf = ComponentArray(merge(NamedTuple(θ), (; σ = upd.σ)))
+    gσ(d) = NoLimits.mcem_q_objective_and_gradient(
+        d, θcf, draws0; free_names = [:σ], scale = :untransformed, serialization = ser
+    )[2][:σ]
+    @test abs(gσ(dmr)) < 1.0e-6
+    @test abs(gσ(dm0)) > 1.0e-3
+    for mfit in (NoLimits.SAEM(; maxiters = 3, q_store_max = 2), NoLimits.MCEM(; maxiters = 2, progress = false))
+        r0 = fit_model(dm0, mfit; serialization = ser, rng = Random.Xoshiro(2))
+        r1 = fit_model(dm1, mfit; serialization = ser, rng = Random.Xoshiro(2))
+        @test collect(NoLimits.get_params(r1; scale = :transformed)) ==
+            collect(NoLimits.get_params(r0; scale = :transformed))
+        rw = fit_model(dmr, mfit; serialization = ser, rng = Random.Xoshiro(2))
+        @test all(isfinite, collect(NoLimits.get_params(rw; scale = :transformed)))
+    end
+    @test_throws ArgumentError fit_model(dmr, NoLimits.SAEM(; suffstats = (args...) -> nothing))
+    @test_throws ArgumentError fit_model(dmr, NoLimits.MCMC(; sampler = MH()))
+
+    # No random effects: MLE, Wald sandwich by default, CV totals weighted by v.
+    mn = fx_nore_model()
+    dfn = copy(fx_nore_df())
+    dfn.v1 = ones(nrow(dfn))
+    dfn.v = [id == 1 ? 2.0 : 1.0 for id in dfn.ID]
+    dupn = dfn[dfn.ID .== 1, :]
+    dupn.ID .= maximum(dfn.ID) + 1
+    mkn(d; kw...) = DataModel(mn, d; primary_id = :ID, time_col = :t, kw...)
+    θn = NoLimits.get_θ0_untransformed(NoLimits.get_fixed(mn))
+    @test og(NoLimits.MLE(), mkn(dfn; likelihood_weights = :v1), θn) == og(NoLimits.MLE(), mkn(dfn), θn)
+    vw, gw = og(NoLimits.MLE(), mkn(dfn; likelihood_weights = :v), θn)
+    vd, gd = og(NoLimits.MLE(), mkn(vcat(dfn, dupn)), θn)
+    @test vw ≈ vd rtol = 1.0e-12
+    @test collect(gw) ≈ collect(gd) rtol = 1.0e-10
+    rn = fit_model(mkn(dfn; likelihood_weights = :v), NoLimits.MLE(); serialization = ser)
+    @test NoLimits.get_uq_diagnostics(compute_uq(rn; method = :wald, rng = Random.Xoshiro(1))).vcov == :sandwich
+    cv = cross_validate(mkn(dfn; likelihood_weights = :v), 2; rng = Random.MersenneTwister(3))
+    sw = get_obs_scores(fit_cv(cv, NoLimits.MLE(); rng = Random.MersenneTwister(1)))
+    @test sw.weight == [id == 1 ? 2.0 : 1.0 for id in sw.individual]
+end
