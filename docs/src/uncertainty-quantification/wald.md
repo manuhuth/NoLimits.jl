@@ -48,7 +48,7 @@ uq_sandwich = compute_uq(res; method=:wald, vcov=:sandwich, n_draws=1000)
 When the Hessian is poorly conditioned - for example, because the log-likelihood surface is locally flat along certain parameter directions - the following controls can improve numerical stability:
 
 - `pseudo_inverse`: use the Moore-Penrose pseudo-inverse when direct matrix inversion is numerically unstable.
-- `hessian_backend`: choose the differentiation strategy - `:auto`, `:forwarddiff`, or `:fd_gradient` (finite-difference based).
+- `hessian_backend`: choose the differentiation strategy - `:auto`, `:forwarddiff`, or `:fd_gradient` (finite differences of the gradient). `:auto` uses `:forwarddiff` for `MLE`, `MAP`, `Pooled`, `PooledMap` and `GHQuadrature` fits and `:fd_gradient` otherwise. For `Laplace` and `FOCEI` fits, and for the Laplace or FOCEI approximation of `MCEM`/`SAEM` fits, `:fd_gradient` differences the exact marginal gradient with the empirical Bayes modes re-solved at every evaluation, and `:forwarddiff` is rejected with an `ArgumentError`: automatic differentiation of that objective holds the modes fixed, so the standard errors would be wrong.
 - `fd_abs_step`: absolute step size for finite-difference computation.
 - `fd_rel_step`: relative step size for finite-difference computation.
 - `fd_max_tries`: maximum number of retry attempts for finite-difference gradient and Hessian evaluations.
@@ -70,10 +70,12 @@ When the covariance matrix requires projection to restore positive semi-definite
 
 ## MCEM/SAEM Approximation Controls
 
-For fits obtained with `MCEM` or `SAEM`, the marginal likelihood is not available in closed form, so the Hessian cannot be computed directly from the EM objective. In these cases, the Wald backend uses a random-effects approximation method (typically Laplace) during the Hessian evaluation.
+For fits obtained with `MCEM` or `SAEM`, the marginal likelihood is not available in closed form, so the Hessian cannot be computed directly from the EM objective. In these cases, the Wald backend uses a random-effects approximation method during the Hessian evaluation.
 
-- `re_approx=:auto` (the default) selects a Laplace-style approximation automatically.
-- `re_approx_method` allows passing an explicit approximation method instance for finer control.
+- `re_approx=:auto` (the default) selects `FOCEI`, or `Laplace` when an outcome distribution has no closed-form Fisher information (for example hidden-Markov outcomes). `re_approx=:focei` and `re_approx=:laplace` select one explicitly.
+- `re_approx_method` allows passing an explicit `Laplace` or `FOCEI` instance for finer control.
+
+The approximation used is stored as `approximation_method` in the diagnostics of the result.
 
 ```julia
 if @isdefined(res_saem) && res_saem !== nothing

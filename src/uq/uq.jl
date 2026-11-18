@@ -58,12 +58,19 @@ Four backends are supported:
 - `vcov::Symbol = :auto`: covariance source for Wald UQ (`:hessian` or `:sandwich`).
   `:auto` uses `:sandwich` when the `DataModel` has likelihood weights (the inverse
   Hessian of a weighted objective is not a valid covariance) and `:hessian` otherwise.
-- `re_approx::Symbol = :auto`: random-effects approximation for Laplace-family Hessians.
-- `re_approx_method`: fitting method used for the RE approximation, or `nothing`.
+- `re_approx::Symbol = :auto`: random-effects approximation of the Wald Hessian for `MCEM`/`SAEM`
+  (and custom `:wald_re`) fits: `:auto` selects `FOCEI`, or `Laplace` when an outcome
+  distribution has no closed-form Fisher information; `:focei` or `:laplace` select one.
+- `re_approx_method`: a `Laplace` or `FOCEI` instance used for the RE approximation, or `nothing`.
 - `level::Real = 0.95`: nominal coverage level for the intervals.
 - `pseudo_inverse::Bool = false`: use the Moore-Penrose pseudo-inverse for singular
   Hessians (Wald only).
-- `hessian_backend::Symbol = :auto`: Hessian computation backend.
+- `hessian_backend::Symbol = :auto`: Hessian computation backend, `:auto`, `:forwarddiff` or
+  `:fd_gradient`. `:auto` uses `:forwarddiff` for `MLE`, `MAP`, `Pooled`, `PooledMap` and
+  `GHQuadrature` fits and `:fd_gradient` otherwise. A Laplace/FOCEI Hessian (also the
+  approximation for `MCEM`/`SAEM`) differences the exact marginal gradient with the modes
+  re-solved at every evaluation; `:forwarddiff` is an `ArgumentError` there, since AD of that
+  objective holds the modes fixed.
 - `fd_abs_step`, `fd_rel_step`, `fd_max_tries`: finite-difference Hessian settings.
 - `n_draws::Int = 2000`: number of Gaussian draws generated for Wald UQ, and the default
   draw count for the chain/VI backend.
@@ -160,6 +167,10 @@ function compute_uq(
         end
         vcov in (:hessian, :sandwich) ||
             error("For Wald UQ, vcov must be :hessian or :sandwich.")
+        # every :wald_re Hessian except GHQuadrature's is a Laplace/FOCEI one
+        src_w = get_method(res)
+        hessian_backend === :forwarddiff && uq_family(src_w) == :wald_re &&
+            !(src_w isa GHQuadrature) && throw(_re_forwarddiff_error(src_w))
         # A non-finite objective means the likelihood short-circuits to a constant, which
         # gives ForwardDiff an exactly zero Hessian and hence zero standard errors (#306).
         obj_src = get_objective(res)

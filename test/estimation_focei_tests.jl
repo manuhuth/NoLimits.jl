@@ -115,6 +115,7 @@ end
     se_f = sqrt.(diag(NL.get_uq_vcov(uq_f; scale = :transformed)))
     se_l = sqrt.(diag(NL.get_uq_vcov(uq_l; scale = :transformed)))
     @test se_f ≈ se_l rtol = 5.0e-2
+    @test_throws ArgumentError compute_uq(rf; hessian_backend = :forwarddiff)
 
     # intervals on natural scale exist for all three parameters
     @test NL.get_uq_intervals(uq_f; scale = :natural) !== nothing
@@ -354,6 +355,9 @@ end
     df = DataFrame(ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0, 1, 1, 0])
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     @test_throws ErrorException fit_model(dm, NL.FOCEI())
+    # default RE approximation (Wald for MCEM/SAEM, identifiability): Laplace here
+    @test NL._default_re_approx(dm) isa NL.Laplace
+    @test NL._default_re_approx(fx_re_dm()) isa NL.FOCEI
 end
 
 @testset "FOCEI fits an ODE model" begin

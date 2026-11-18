@@ -273,16 +273,17 @@ function _finalize_wald_uqresult(
 end
 
 @inline function _is_re_laplace_family(method::FittingMethod)
-    return method isa Laplace
+    return method isa Union{Laplace, FOCEI}
 end
 
+# dm, ode_args, ode_kwargs: for the default (FOCEI unless an outcome needs Laplace).
 function _resolve_wald_re_approx_method(
         source_method::FittingMethod;
         re_approx::Symbol,
-        re_approx_method::Union{Nothing, FittingMethod}
+        re_approx_method::Union{Nothing, FittingMethod},
+        dm::DataModel, ode_args::Tuple = (), ode_kwargs::NamedTuple = NamedTuple()
     )
-    if _is_re_laplace_family(source_method) || source_method isa GHQuadrature ||
-            source_method isa FOCEI
+    if _is_re_laplace_family(source_method) || source_method isa GHQuadrature
         re_approx == :auto ||
             error("re_approx is only used for MCEM/SAEM Wald UQ results.")
         re_approx_method === nothing ||
@@ -302,15 +303,15 @@ function _resolve_wald_re_approx_method(
 
     if re_approx_method !== nothing
         _is_re_laplace_family(re_approx_method) ||
-            error("re_approx_method must be a Laplace method instance.")
+            error("re_approx_method must be a Laplace or FOCEI method instance.")
         return re_approx_method
     end
 
-    approx = re_approx == :auto ? :laplace : re_approx
-    if approx == :laplace
-        return Laplace()
-    end
-    error("For MCEM/SAEM Wald UQ, re_approx must be :auto or :laplace.")
+    re_approx == :auto &&
+        return _default_re_approx(dm; ode_args = ode_args, ode_kwargs = ode_kwargs)
+    re_approx == :focei && return FOCEI()
+    re_approx == :laplace && return Laplace()
+    error("For MCEM/SAEM Wald UQ, re_approx must be :auto, :focei or :laplace.")
 end
 
 function _compute_uq_wald_no_re(
@@ -521,17 +522,18 @@ function _compute_uq_wald_re(
     dm === nothing &&
         error("This fit result does not store a DataModel; pass store_data_model=true when fitting.")
     source_method = get_method(res)
-    approx_method = _resolve_wald_re_approx_method(
-        source_method;
-        re_approx = re_approx,
-        re_approx_method = re_approx_method
-    )
 
     constants_use = _resolve_fit_kw(res, constants, :constants, NamedTuple())
     constants_re_use = _resolve_fit_kw(res, constants_re, :constants_re, NamedTuple())
     penalty_use = _resolve_fit_kw(res, penalty, :penalty, NamedTuple())
     ode_args_use = _resolve_fit_kw(res, ode_args, :ode_args, ())
     ode_kwargs_use = _resolve_fit_kw(res, ode_kwargs, :ode_kwargs, NamedTuple())
+    approx_method = _resolve_wald_re_approx_method(
+        source_method;
+        re_approx = re_approx,
+        re_approx_method = re_approx_method,
+        dm = dm, ode_args = ode_args_use, ode_kwargs = ode_kwargs_use
+    )
     extra_use = _fit_kw(res, :extra_objective, nothing)   # see the no-RE path (#331)
     # Force SERIAL evaluation of the random-effects Laplace objective (EB solve + inner
     # logdet/Hessian) used to build the covariance. The threaded per-batch inner Hessian

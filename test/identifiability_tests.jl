@@ -143,4 +143,8 @@ end
     @test rep.method === :focei
     @test !isempty(rep.random_effect_information)
     @test identifiability_report(dm; method = :focei, hessian_backend = :fd_gradient).method === :focei
+    @test identifiability_report(dm).method === :focei     # :auto for random effects
+    # ForwardDiff of the Laplace/FOCEI objective holds the modes fixed: an error, no fallback
+    @test_throws ArgumentError identifiability_report(dm; method = :laplace, hessian_backend = :forwarddiff)
+    @test_throws ArgumentError identifiability_report(res; hessian_backend = :forwarddiff)
 end

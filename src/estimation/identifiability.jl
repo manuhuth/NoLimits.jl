@@ -113,10 +113,13 @@ function _ident_method_symbol(method)
     error("Unsupported method $(typeof(method)) for identifiability_report.")
 end
 
-function _resolve_ident_method(dm::DataModel, method_spec)
+function _resolve_ident_method(
+        dm::DataModel, method_spec; ode_args::Tuple = (), ode_kwargs::NamedTuple = NamedTuple()
+    )
     method_spec = _as_symbol(method_spec)
     if method_spec isa Symbol
-        method_spec === :auto && return _has_random_effects(dm) ? Laplace() : MLE()
+        method_spec === :auto && return _has_random_effects(dm) ?
+            _default_re_approx(dm; ode_args = ode_args, ode_kwargs = ode_kwargs) : MLE()
         method_spec === :mle && return MLE()
         method_spec === :map && return MAP()
         method_spec === :laplace && return Laplace()
@@ -129,7 +132,9 @@ function _resolve_ident_method(dm::DataModel, method_spec)
     error("Unsupported method specification $(typeof(method_spec)) for identifiability_report.")
 end
 
-function _validate_ident_method(dm::DataModel, method)
+function _validate_ident_method(dm::DataModel, method, hessian_backend::Symbol = :auto)
+    hessian_backend === :forwarddiff && method isa Union{Laplace, FOCEI} &&
+        throw(_re_forwarddiff_error(method))
     has_re = _has_random_effects(dm)
     if method isa MLE || method isa MAP
         has_re &&
@@ -740,7 +745,8 @@ used by default (`at=:fit`).
 
 # Keyword Arguments
 - `method::Union{Symbol, FittingMethod} = :auto`: estimation method whose objective is
-  used. `:auto` selects `MLE` for models without random effects and `Laplace` otherwise.
+  used. `:auto` selects `MLE` for models without random effects and `FOCEI` otherwise
+  (`Laplace` when an outcome distribution has no closed-form Fisher information).
   Supported symbols: `:mle`, `:map`, `:laplace`, `:focei`. `FOCEI` uses its
   Fisher-information inner curvature, as in its fit.
 - `at::Union{Symbol, ComponentArray} = :start`: evaluation point. `:start` uses the
@@ -751,8 +757,11 @@ used by default (`at=:fit`).
 - `rng_seed::Union{Nothing, UInt64} = nothing`: optional fixed seed for reproducibility.
 - `atol::Real = 1e-8`: absolute tolerance for Hessian rank determination.
 - `rtol::Real = sqrt(eps(Float64))`: relative tolerance for Hessian rank determination.
-- `hessian_backend::Symbol = :auto`: Hessian computation backend. `:auto` tries
-  ForwardDiff then finite differences.
+- `hessian_backend::Symbol = :auto`: Hessian computation backend. `:auto` uses ForwardDiff
+  for `MLE`/`MAP` (falling back to finite differences of the gradient if it fails) and finite
+  differences of the exact marginal gradient, with the modes re-solved, for `Laplace`/`FOCEI`.
+  `:forwarddiff` with `Laplace`/`FOCEI` is an `ArgumentError`: AD of that objective holds the
+  modes fixed.
 - `fd_abs_step::Real = 1e-4`: absolute finite-difference step size.
 - `fd_rel_step::Real = 1e-3`: relative finite-difference step size.
 - `fd_max_tries::Int = 8`: maximum step-size retry attempts for finite differences.
@@ -786,8 +795,8 @@ function identifiability_report(
     ode_kwargs = _as_namedtuple(ode_kwargs)
     at = _as_symbol(at)
     hessian_backend = _as_symbol(hessian_backend)
-    method_use = _resolve_ident_method(dm, method)
-    _validate_ident_method(dm, method_use)
+    method_use = _resolve_ident_method(dm, method; ode_args = ode_args, ode_kwargs = ode_kwargs)
+    _validate_ident_method(dm, method_use, hessian_backend)
     return _identifiability_report(
         dm,
         method_use,
@@ -846,9 +855,6 @@ function identifiability_report(
     else
         method
     end
-    method_use = _resolve_ident_method(dm, method_use)
-    _validate_ident_method(dm, method_use)
-
     fitkw = get_fit_kwargs(res)
     constants_use = constants === nothing ?
         (
@@ -877,6 +883,10 @@ function identifiability_report(
         ) : serialization
     rng_use = rng === nothing ?
         (haskey(fitkw, :rng) ? getfield(fitkw, :rng) : _default_rng()) : rng
+    method_use = _resolve_ident_method(
+        dm, method_use; ode_args = ode_args_use, ode_kwargs = ode_kwargs_use
+    )
+    _validate_ident_method(dm, method_use, hessian_backend)
 
     fit_point = get_params(res; scale = :untransformed)
 

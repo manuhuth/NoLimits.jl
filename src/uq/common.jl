@@ -485,6 +485,19 @@ function _intervals_from_draws(draws::Matrix{Float64}, level::Float64)
     return UQIntervals(level, lower, upper)
 end
 
+# `hessian_backend = :forwarddiff` for a Laplace/FOCEI objective (Wald, identifiability):
+# AD holds the EB modes fixed, so the Hessian misses their θ-dependence.
+function _re_forwarddiff_error(method)
+    return ArgumentError(
+        "hessian_backend = :forwarddiff is not available for $(nameof(typeof(method))): " *
+            "automatic differentiation of the Laplace/FOCEI objective holds the empirical " *
+            "Bayes modes fixed and misses their dependence on the parameters, so the Hessian " *
+            "and the standard errors would be wrong. Use hessian_backend = :auto or " *
+            ":fd_gradient (finite differences of the exact marginal gradient, with the modes " *
+            "re-solved at every evaluation)."
+    )
+end
+
 # `grad`: optional analytic gradient of `obj` for the :fd_gradient backend. Needed when AD
 # through `obj` is not the total derivative, e.g. a Laplace objective whose inner modes b*
 # are re-solved in Float64 (AD at fixed b* misses the implicit db*/dθ term).
