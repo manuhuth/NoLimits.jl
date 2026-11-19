@@ -200,6 +200,10 @@ using SciMLBase
 res_threads = fit_model(dm, NoLimits.GHQuadrature(level=2); serialization=EnsembleThreads())
 ```
 
+## Likelihood Weights
+
+With `DataModel(...; likelihood_weights = :v)` the quadrature integrates the weighted integrand of [Conditional-Likelihood Weights](../data-model-construction.md#Conditional-Likelihood-Weights), and the adaptive rule is centered at its mode. `sample_random_effects` draws from the Laplace approximation of the unweighted conditional posterior at `θ̂`, and Wald intervals default to the sandwich covariance.
+
 ## Where to go next
 
 - [Choosing a method](index.md#Choosing-a-Method) - how this compares with the alternatives.

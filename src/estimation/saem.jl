@@ -491,7 +491,11 @@ end
 Stochastic Approximation Expectation-Maximization for random-effects models. SAEM
 maintains a stochastic approximation of the sufficient statistics using a decreasing
 step-size sequence; the M-step updates the fixed effects via gradient-based optimization
-or closed-form updates (when `builtin_stats` is enabled).
+or closed-form updates (when `builtin_stats` is enabled). With
+`DataModel(...; likelihood_weights)` the E-step stays unweighted and each individual's
+conditional log-likelihood in the Q-function and outcome sufficient statistics is multiplied by
+its weight: a weighted complete-data EM, which differs from the weighted marginal likelihood
+that `Laplace`/`FOCEI`/`GHQuadrature` maximize.
 
 # Keyword Arguments
 - `optimizer`: M-step Optimization.jl optimizer. Defaults to `LBFGS` with backtracking.
@@ -547,7 +551,11 @@ or closed-form updates (when `builtin_stats` is enabled).
   post-stabilization iterates (after burn-in plus `t0` for `:robbins_monro`, after
   phase 1 for `:two_phase`) outside any active SA-anneal clamp, so the earliest possible
   stop is `convergence_window + consecutive_params` iterations after stabilization ends.
-- `suffstats`: custom sufficient statistics function, or `nothing` to use the built-in.
+- `suffstats`: custom sufficient statistics function, or `nothing` to use the built-in. It
+  receives the `DataModel` and must apply `get_weights(dm)` itself; it cannot be combined
+  with `likelihood_weights` (nor can `q_from_stats` or `mstep_closed_form`). With
+  `likelihood_weights` the E-step stays unweighted and the weights enter the M-step only
+  (a weighted complete-data EM); see the data-model documentation.
 - `q_from_stats`: custom Q-function from sufficient statistics, or `nothing`.
 - `mstep_closed_form`: custom closed-form M-step function, or `nothing`.
 - `builtin_stats = :auto`: closed-form M-step from built-in sufficient statistics.
@@ -2487,16 +2495,18 @@ function _saem_push_outcome_stat(prev, dist, y, T::Type)
     )
 end
 
-# Likelihood weights scale an individual's sufficient statistics and its count.
+# Batch and likelihood weights scale an individual's sufficient statistics and its count: the batch
+# weight times the individual's conditional-likelihood weight (RE statistics carry only the
+# batch weight).
 function _saem_weight_outcome_stat(st, dm::DataModel, i::Int)
-    get_weights(dm) === nothing && return st
-    w = _ind_weight(dm, i)
+    _no_weights(dm) && return st
+    w = _ind_wv(dm, i)
     return (family = st.family, s1 = w * st.s1, s2 = w * st.s2, ss = w * st.ss, n = w * st.n)
 end
 
 function _saem_weight_hmm_stat(st, dm::DataModel, i::Int)
-    get_weights(dm) === nothing && return st
-    w = _ind_weight(dm, i)
+    _no_weights(dm) && return st
+    w = _ind_wv(dm, i)
     return (family = st.family, target = st.target, sum_w = w .* st.sum_w, sum_wy = w .* st.sum_wy)
 end
 
@@ -2682,7 +2692,7 @@ function _saem_builtin_collect_current_stats(
             re_pairs,
             re => (
                 family = family, mean = mean_x, second = second_x,
-                # Summed weight under likelihood weights, so `mean * n` stays additive.
+                # Summed weight under batch weights, so `mean * n` stays additive.
                 n = get_weights(dm) === nothing ? nvals : wsum,
                 known_mean = known_mean,
             )
@@ -3830,6 +3840,11 @@ function _fit_model(
         store_data_model = store_data_model,
         extra_objective = extra_objective,
     )
+    get_likelihood_weights(dm) === nothing ||
+        (method.saem.suffstats === nothing && method.saem.q_from_stats === nothing && method.saem.mstep_closed_form === nothing) ||
+        throw(ArgumentError("SAEM: user `suffstats`/`q_from_stats`/`mstep_closed_form` cannot be combined with `likelihood_weights`; use the built-in statistics (`builtin_stats`), which apply them."))
+    # the E-step draws from the unweighted conditional posterior (weights act on the M-step)
+    dm_s = _sampling_dm(dm)
     re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) &&
         error("SAEM requires random effects. Use MLE/MAP for fixed-effects models.")
@@ -3874,7 +3889,7 @@ function _fit_model(
     if re_0 === nothing
         # probe θ0_u: that is the point the pre-loop seed below evaluates
         θ0_r = _em_repair_start(
-            dm, batch_infos, θ0_u, const_cache,
+            dm_s, batch_infos, θ0_u, const_cache,
             ll_cache isa Vector ? ll_cache[1] : ll_cache, rng, re_names, "SAEM"
         )
         if θ0_r !== θ0_u
@@ -4118,7 +4133,7 @@ function _fit_model(
             info = batch_infos[bi]
             get_n_b(info) == 0 && continue
             b_init = b0s !== nothing ? b0s[bi] : _em_seed_batch_b(
-                    dm, info, θ0_u, const_cache, cache_init, rng, re_names, bi, "SAEM"
+                    dm_s, info, θ0_u, const_cache, cache_init, rng, re_names, bi, "SAEM"
                 )
             b_current[bi] .= b_init
             lp = b0s !== nothing ? b_init : _b_to_last_params(b_init, info, re_names)
@@ -4169,7 +4184,7 @@ function _fit_model(
         end
 
         _saem_sample_batches!(
-            dm, batch_infos, updated, θu_curr, const_cache, ll_cache,
+            dm_s, batch_infos, updated, θu_curr, const_cache, ll_cache,
             method.saem.sampler, tkwargs, batch_rngs,
             re_names, method.saem.warm_start, last_chain_params, b_chains,
             effective_n_chains, serialization;
@@ -4204,7 +4219,7 @@ function _fit_model(
                 method.saem.suffstats === nothing
             for _retry in 1:(method.saem.max_estep_retries)
                 bad = _saem_bad_batches(
-                    dm, batch_infos, updated, θu_curr, b_chains,
+                    dm_s, batch_infos, updated, θu_curr, b_chains,
                     effective_n_chains, const_cache, ll_cache;
                     serialization = serialization, anneal_sds = anneal_sds,
                     chain_states = last_chain_params
@@ -4214,7 +4229,7 @@ function _fit_model(
                     @info "SAEM retrying bad batches" iter = iter retry = _retry bad_batches = bad
                 end
                 _saem_sample_batches!(
-                    dm, batch_infos, bad, θu_curr, const_cache, ll_cache,
+                    dm_s, batch_infos, bad, θu_curr, const_cache, ll_cache,
                     method.saem.sampler, retry_tkwargs, batch_rngs,
                     re_names, method.saem.warm_start, last_chain_params, b_chains,
                     effective_n_chains, serialization;
@@ -4879,7 +4894,7 @@ function _fit_model(
     ]
     eb_modes = store_eb_modes ?
         _compute_bstars(
-            dm, θ_hat_u, ebe_fixed_maps, ll_cache, ebe, rng;
+            dm_s, θ_hat_u, ebe_fixed_maps, ll_cache, ebe, rng;
             rescue = method.saem.ebe_rescue,
             progress = method.saem.progress,
             progress_desc = "SAEM Final EBE",

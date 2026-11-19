@@ -4,9 +4,14 @@ module NoLimitsJLD2Ext
 # non-serializable fields, rebuilding the result) is plain Julia and stays in core.
 
 import JLD2
-import NoLimits: _jld2_save, _jld2_load
+import NoLimits: _jld2_save, _jld2_load, _SavedDataModelConfig
 
 _jld2_save(path::AbstractString, saved) = JLD2.jldsave(path; saved = saved)
-_jld2_load(path::AbstractString) = JLD2.load(path, "saved")
+# Saved DataModel configs are rebuilt through `convert(_SavedDataModelConfig, ::NamedTuple)`,
+# which fills fields that older files do not have.
+const _TYPEMAP = Dict(
+    "NoLimits._SavedDataModelConfig" => JLD2.Upgrade(_SavedDataModelConfig)
+)
+_jld2_load(path::AbstractString) = JLD2.load(path, "saved"; typemap = _TYPEMAP)
 
 end

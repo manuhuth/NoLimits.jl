@@ -37,6 +37,17 @@ struct _SavedDataModelConfig
     serialization_kind::Symbol   # :serial / :threads / :distributed
     t0::Union{Nothing, Float64}
     weights_col::Union{Nothing, Symbol}
+    likelihood_weights_col::Union{Nothing, Symbol}
+end
+
+# JLD2 reads every saved config through this (`JLD2.Upgrade` typemap in NoLimitsJLD2Ext), so
+# files written before a field existed load with its default.
+function Base.convert(::Type{_SavedDataModelConfig}, nt::NamedTuple)
+    return _SavedDataModelConfig(
+        nt.primary_id, nt.time_col, nt.evid_col, nt.amt_col, nt.rate_col, nt.cmt_col,
+        nt.serialization_kind, nt.t0, get(nt, :weights_col, nothing),
+        get(nt, :likelihood_weights_col, nothing)
+    )
 end
 
 # ─── Per-method saved result structs ─────────────────────────────────────────
@@ -197,7 +208,8 @@ function _build_saved_config(dm::DataModel)
         cfg.cmt_col,
         _ensemble_to_symbol(cfg.serialization),
         cfg.t0 === nothing ? nothing : float(cfg.t0),
-        cfg.weights_col
+        cfg.weights_col,
+        _lik_weights_col(dm)
     )
 end
 
@@ -413,7 +425,8 @@ function _reconstruct_data_model(df, config::_SavedDataModelConfig, model)
         cmt_col = config.cmt_col,
         t0 = config.t0,
         serialization = _symbol_to_serialization(config.serialization_kind),
-        weights = config.weights_col
+        weights = config.weights_col,
+        likelihood_weights = config.likelihood_weights_col
     )
 end
 

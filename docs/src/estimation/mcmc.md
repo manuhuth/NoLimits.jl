@@ -256,6 +256,10 @@ diagnostics = get_diagnostics(res)
 
 There is no single optimized objective value: `get_objective(res)` returns the mean negative log posterior density over the post-warm-up draws (lower is better, as for the optimization methods; `NaN` if the sampler records no log-density), and `get_converged(res)` returns `missing`.
 
+## Batch and Likelihood Weights
+
+With `DataModel(...; weights = :w)` each individual's conditional log-likelihood is multiplied by its weight; the priors are not weighted. A `DataModel` with `likelihood_weights` is rejected with an `ArgumentError`, also by `compute_uq(...; method = :mcmc_refit)`.
+
 ## Where to go next
 
 - [Choosing a method](index.md#Choosing-a-Method) - how this compares with the alternatives.

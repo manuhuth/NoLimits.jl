@@ -56,13 +56,13 @@ Four backends are supported:
   so the aliases select the backend's interval rather than a variant of it, and a
   cross-backend alias (e.g. `method=:wald, interval=:equaltail`) is an error.
 - `vcov::Symbol = :auto`: covariance source for Wald UQ (`:hessian` or `:sandwich`).
-  `:auto` uses `:sandwich` when the `DataModel` has likelihood weights and `:hessian`
-  otherwise.
-  For a `DataModel` with likelihood weights the inverse Hessian of the weighted objective is
-  not a valid covariance, so `vcov = :hessian` and `method = :profile` (also reached through
+  `:auto` uses `:sandwich` when the `DataModel` has `weights` or `likelihood_weights` and
+  `:hessian` otherwise.
+  With either kind of weights the inverse Hessian of the weighted objective is not a valid
+  covariance, so `vcov = :hessian` and `method = :profile` (also reached through
   `interval = :profile`) throw an `ArgumentError`. Valid options there are `method = :wald`
-  with `vcov = :sandwich` (or `:auto`), `method = :mcmc_refit`, and `method = :chain` for
-  MCMC/VI fits.
+  with `vcov = :sandwich` (or `:auto`) and, for batch `weights` only, `method = :mcmc_refit`
+  and `method = :chain` for MCMC/VI fits (MCMC rejects `likelihood_weights`).
 - `re_approx::Symbol = :auto`: random-effects approximation of the Wald Hessian for `MCEM`/`SAEM`
   (and custom `:wald_re`) fits: `:auto` selects `FOCEI`, or `Laplace` when an outcome
   distribution has no closed-form Fisher information; `:focei` or `:laplace` select one.

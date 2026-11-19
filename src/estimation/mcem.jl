@@ -217,7 +217,10 @@ end
 
 Monte Carlo Expectation-Maximization for random-effects models. At each EM iteration the
 E-step draws random effects; the M-step maximizes the Monte Carlo Q-function over the
-fixed effects.
+fixed effects. With `DataModel(...; likelihood_weights)` the E-step draws (and importance
+weights) stay unweighted and each individual's conditional log-likelihood in the Q-function
+is multiplied by its weight: a weighted complete-data EM, which differs from the weighted
+marginal likelihood that `Laplace`/`FOCEI`/`GHQuadrature` maximize.
 
 # Keyword Arguments
 - `optimizer`: M-step Optimization.jl optimizer. Defaults to `LBFGS` with backtracking.
@@ -1616,6 +1619,9 @@ function _fit_model(
         store_data_model = store_data_model,
         extra_objective = extra_objective,
     )
+    # the E-step draws (and IS weights) target the unweighted conditional posterior;
+    # likelihood weights act on the M-step only
+    dm_s = _sampling_dm(dm)
     re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) &&
         error("MCEM requires random effects. Use MLE/MAP for fixed-effects models.")
@@ -1660,7 +1666,7 @@ function _fit_model(
     # Start repair (shared with SAEM): no finite log-joint for any initial RE draw at θ0.
     if re_0 === nothing
         θ0_r = _em_repair_start(
-            dm, batch_infos, θ0_u, const_cache,
+            dm_s, batch_infos, θ0_u, const_cache,
             ll_cache isa Vector ? ll_cache[1] : ll_cache, rng, re_names, "MCEM"
         )
         if θ0_r !== θ0_u
@@ -1779,7 +1785,7 @@ function _fit_model(
                 continue
             end
             b_init = _em_seed_batch_b(
-                dm, info, θ0_u, const_cache, cache_init, rng, re_names, bi, "MCEM"
+                dm_s, info, θ0_u, const_cache, cache_init, rng, re_names, bi, "MCEM"
             )
             last_params[bi] = _b_to_last_params(b_init, info, re_names)
         end
@@ -1802,7 +1808,7 @@ function _fit_model(
     proposal_blocks = if method.e_step isa MCEM_IS
         [
             _is_init_proposal_blocks(
-                    dm, batch_infos[bi], θ0_u, ll_cache_single, re_names,
+                    dm_s, batch_infos[bi], θ0_u, ll_cache_single, re_names,
                     re_types
                 ) for bi in eachindex(batch_infos)
         ]
@@ -1884,7 +1890,7 @@ function _fit_model(
                     bi = updated[k]
                     info = batch_infos[bi]
                     samples, lastp, _ = _mcem_sample_batch(
-                        dm, info, θu_curr, const_cache, caches[c],
+                        dm_s, info, θu_curr, const_cache, caches[c],
                         mcmc_es.sampler, tkwargs, batch_rngs[bi],
                         re_names, mcmc_es.warm_start, last_params[bi];
                         outer_iter = iter
@@ -1896,7 +1902,7 @@ function _fit_model(
                 for bi in updated
                     info = batch_infos[bi]
                     samples, lastp, _ = _mcem_sample_batch(
-                        dm, info, θu_curr, const_cache, ll_cache,
+                        dm_s, info, θu_curr, const_cache, ll_cache,
                         mcmc_es.sampler, tkwargs, batch_rngs[bi],
                         re_names, mcmc_es.warm_start, last_params[bi];
                         outer_iter = iter
@@ -1934,7 +1940,7 @@ function _fit_model(
                     bi = updated[k]
                     info = batch_infos[bi]
                     samps, log_ws, ess = _is_sample_batch(
-                        dm, info, θu_curr, const_cache, caches[c],
+                        dm_s, info, θu_curr, const_cache, caches[c],
                         batch_rngs[bi], re_names, re_types, is_es, proposal_blocks[bi];
                         n_samples = n_iter
                     )
@@ -1952,7 +1958,7 @@ function _fit_model(
                 for bi in updated
                     info = batch_infos[bi]
                     samps, log_ws, ess = _is_sample_batch(
-                        dm, info, θu_curr, const_cache, ll_cache_single,
+                        dm_s, info, θu_curr, const_cache, ll_cache_single,
                         batch_rngs[bi], re_names, re_types, is_es, proposal_blocks[bi];
                         n_samples = n_iter
                     )
@@ -2298,7 +2304,7 @@ function _fit_model(
     last_b_candidates = samples_by_batch
     eb_modes = store_eb_modes ?
         _compute_bstars(
-            dm, θ_hat_u, constants_re, ll_cache, method.ebe, rng;
+            dm_s, θ_hat_u, constants_re, ll_cache, method.ebe, rng;
             rescue = method.ebe_rescue,
             progress = method.progress,
             progress_desc = "MCEM Final EBE",

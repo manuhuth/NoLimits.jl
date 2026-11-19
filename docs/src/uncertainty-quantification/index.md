@@ -45,7 +45,7 @@ uq_wald = compute_uq(
 
 Key options:
 
-- `vcov`: `:hessian` or `:sandwich`. For a `DataModel` with likelihood weights only `:sandwich` (selected by `:auto`) is accepted, and `method = :profile` is rejected; see [Likelihood Weights](../data-model-construction.md#Likelihood-Weights)
+- `vcov`: `:hessian` or `:sandwich`. For a `DataModel` with `weights` or `likelihood_weights` only `:sandwich` (selected by `:auto`) is accepted, and `method = :profile` is rejected; see [Batch Weights](../data-model-construction.md#Batch-Weights) and [Conditional-Likelihood Weights](../data-model-construction.md#Conditional-Likelihood-Weights)
 - `pseudo_inverse`: use pseudo-inverse if direct inversion is unstable
 - `hessian_backend`: `:auto`, `:forwarddiff`, or `:fd_gradient`. `:forwarddiff` is available only for `MLE`, `MAP`, `Pooled`, `PooledMap` and `GHQuadrature` fits; the Laplace/FOCEI Hessians use finite differences of the exact marginal gradient
 - finite-difference controls: `fd_abs_step`, `fd_rel_step`, `fd_max_tries`

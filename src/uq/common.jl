@@ -20,20 +20,21 @@ end
 # UQ is restricted to MLE/MAP/Laplace/GHQuadrature, so recommending it to an MCEM or SAEM
 # user sends them into an error instead of an alternative.
 @inline function _wald_fallback_methods(method_sym::Symbol, weighted::Bool = false)
-    weighted && return "method = :mcmc_refit"
+    weighted && return "method = :mcmc_refit (batch `weights` only; MCMC rejects `likelihood_weights`)"
     return method_sym in (:mle, :map, :laplace, :ghquadrature) ?
         "method = :profile / :mcmc_refit" : "method = :mcmc_refit"
 end
 
-# UQ backends that remain valid for a DataModel with likelihood weights (#437).
+# UQ backends that remain valid for a weighted DataModel (#437). MCMC rejects
+# `likelihood_weights`, so the MCMC-based backends apply to batch `weights` only.
 const _WEIGHTED_UQ_OPTIONS = "method = :wald with vcov = :sandwich (vcov = :auto selects it), " *
-    "method = :mcmc_refit (or :chain for an MCMC/VI fit)"
+    "or, for batch `weights` only, method = :mcmc_refit (or :chain for an MCMC/VI fit)"
 
 # With weights the information identity fails (the score covariance scales with w^2, the
 # Hessian with w), so the inverse Hessian and the profile cutoff built on it are invalid.
 function _weighted_uq_error(what::AbstractString)
     return ArgumentError(
-        "$(what) is not available for a DataModel with likelihood weights: the inverse " *
+        "$(what) is not available for a DataModel with `weights` or `likelihood_weights`: the inverse " *
             "Hessian of a weighted objective is not a valid covariance, and the profile " *
             "likelihood-ratio cutoff relies on it. Use " * _WEIGHTED_UQ_OPTIONS * "."
     )

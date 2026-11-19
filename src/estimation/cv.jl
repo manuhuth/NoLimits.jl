@@ -109,7 +109,8 @@ function _rebuild_dm(dm_ref::DataModel, rows::Vector{Int})
         primary_id = cfg.primary_id, time_col = cfg.time_col,
         evid_col = cfg.evid_col, amt_col = cfg.amt_col,
         rate_col = cfg.rate_col, cmt_col = cfg.cmt_col, t0 = cfg.t0,
-        serialization = cfg.serialization, weights = cfg.weights_col
+        serialization = cfg.serialization, weights = cfg.weights_col,
+        likelihood_weights = _lik_weights_col(dm_ref)
     )
 end
 
@@ -552,7 +553,8 @@ function _cv_evaluate_mc(
     bstars_per_sample = seen_re_mode == :conditional ?
         _sample_conditional_bstars(
             dm_train, batch_infos, bstars, θu,
-            const_cache, ll_cache_train, res_train, n_mc_samples, rng
+            const_cache, ll_cache_train, res_train, n_mc_samples, rng;
+            constants_re = _res_constants_re(res_train, constants_re)
         ) : nothing
 
     # RE distribution builder — used for unseen :montecarlo draws and :mean plug-in.
@@ -747,9 +749,9 @@ performance on the held-out test set. All `kwargs` are forwarded to
 - `fold_serialization`: controls fold-level parallelism. Use `EnsembleThreads()`
   to evaluate folds concurrently.
 - `constants_re`: fix specific RE levels on the natural scale.
-- `weighted`: when the `DataModel` has likelihood weights (see [`get_weights`](@ref)) and
-  this is `true` (default), each held-out individual's scores are multiplied by its
-  weight in the fold totals, and `mean_obs_loglikelihood` divides the weighted sum by the
+- `weighted`: when the `DataModel` has batch or likelihood weights (see [`get_weights`](@ref) and
+  [`get_likelihood_weights`](@ref)) and this is `true` (default), each held-out individual's
+  scores are multiplied by its weight `w·v` in the fold totals, and `mean_obs_loglikelihood` divides the weighted sum by the
   summed weights of the scored observations. A `:weight` column is added to
   `obs_scores`. `false` gives unweighted scores. The training fits are weighted either way.
 
@@ -793,7 +795,8 @@ function fit_cv(
     )
     constants_re = _as_namedtuple(constants_re)
     ode_kwargs = _as_namedtuple(ode_kwargs)
-    use_weights = weighted && get_weights(cv_spec.dm) !== nothing
+    use_weights = weighted &&
+        (get_weights(cv_spec.dm) !== nothing || get_likelihood_weights(cv_spec.dm) !== nothing)
     seen_re_mode = _as_symbol(seen_re_mode)
     unseen_re_mode = _as_symbol(unseen_re_mode)
     seen_re_mode ∈ (:ebe, :conditional) ||
@@ -879,8 +882,10 @@ function fit_cv(
 
         insertcols!(obs_df, 1, :fold => fill(f, nrow(obs_df)))
         if use_weights && nrow(obs_df) > 0
-            w_test = get_weights(dm_test)
-            obs_df[!, :weight] = Float64[w_test[dm_test.id_index[id]] for id in obs_df[!, :individual]]
+            obs_df[!, :weight] = Float64[
+                _ind_wv(dm_test, dm_test.id_index[id])
+                    for id in obs_df[!, :individual]
+            ]
         end
 
         # A fold can score nothing at all (every outcome missing, every ODE solve

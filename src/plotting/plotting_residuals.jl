@@ -496,8 +496,10 @@ Compute residuals for each observation and return a `DataFrame`.
 `-logpdf(dist, y)` (smaller is better), so `-sum(skipmissing(rdf.logscore))` is the
 conditional log-likelihood at the random effects the residuals were evaluated at. For
 HMM-family outcomes `dist` is the forward-filtered distribution, so this identity holds
-through `missing` rows as well. On Laplace/FOCEI/SAEM/MCEM/Pooled fits it therefore
-matches `get_loglikelihood(res)` (which also conditions on the EB modes) to round-off;
+through `missing` rows as well. On Laplace/FOCEI/SAEM/MCEM/Pooled fits of a `DataModel`
+without `weights` and `likelihood_weights` it therefore matches `get_loglikelihood(res)`
+(which also conditions on the EB modes) to round-off; the scores are never weighted, so with
+weights `get_loglikelihood` is the weighted sum `Σ_i w_i v_i` of the individual totals instead;
 on `GHQuadrature` fits `get_loglikelihood` returns the *marginal* likelihood, which
 integrates over the random effects and is a different quantity. An observation the model
 assigns zero probability scores `Inf`; `missing` means the score could not be computed.

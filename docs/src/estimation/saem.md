@@ -458,6 +458,10 @@ notes = NoLimits.get_notes(res)  # includes closed_form_mstep_mode/sources and b
 re_df = get_random_effects(res)
 ```
 
+## Likelihood Weights
+
+With `DataModel(...; likelihood_weights = :v)` the E-step draws and the final empirical Bayes modes ignore the weights; the weights enter only the Q-function and the closed-form outcome statistics. This is a weighted complete-data EM, which differs from the weighted marginal likelihood that `Laplace`, `FOCEI` and `GHQuadrature` maximize (see [Conditional-Likelihood Weights](../data-model-construction.md#Conditional-Likelihood-Weights)). User-supplied `suffstats`, `q_from_stats` and `mstep_closed_form` are rejected together with `likelihood_weights`.
+
 ## Where to go next
 
 - [SAEM: Samplers, Annealing, and Closed-Form Updates](saem-advanced.md) - the advanced options.

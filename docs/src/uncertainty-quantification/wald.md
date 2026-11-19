@@ -37,6 +37,7 @@ The `vcov` argument selects the variance-covariance estimator.
 
 - `vcov=:hessian`: computes the covariance as the inverse of the observed information (Hessian) matrix. This is the standard choice when the model is correctly specified.
 - `vcov=:sandwich`: computes the sandwich (robust) covariance estimator, which provides consistent standard errors even under mild model misspecification.
+- `vcov=:auto` (default): `:sandwich` when the `DataModel` has `weights` or `likelihood_weights` (the inverse Hessian of a weighted objective is not a covariance estimate), `:hessian` otherwise.
 
 ```julia
 uq_hessian = compute_uq(res; method=:wald, vcov=:hessian, n_draws=1000)

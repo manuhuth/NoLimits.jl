@@ -395,6 +395,7 @@ function simulate_data_model(
         cmt_col = cfg.cmt_col,
         t0 = cfg.t0,
         serialization = serialization,
-        weights = cfg.weights_col
+        weights = cfg.weights_col,
+        likelihood_weights = _lik_weights_col(dm)
     )
 end

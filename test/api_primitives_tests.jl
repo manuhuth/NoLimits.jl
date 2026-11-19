@@ -1418,7 +1418,7 @@ end
     end
 end
 
-@testset "likelihood weights: marginal objectives, fits, UQ, CV" begin
+@testset "batch weights: marginal objectives, fits, UQ, CV" begin
     ser = NoLimits.EnsembleSerial()
     og = NoLimits.objective_and_gradient
     model = fx_re_model()
@@ -1456,7 +1456,7 @@ end
             collect(NoLimits.get_params(rd; scale = :transformed)) rtol = 1.0e-6
         @test NoLimits.get_loglikelihood(rw) ≈ NoLimits.get_loglikelihood(rd) rtol = 1.0e-6
         # Inverse-Hessian UQ is rejected for a weighted fit before any Hessian (#437).
-        @test_throws r"likelihood weights" compute_uq(rw; method = :wald, vcov = :hessian)
+        @test_throws r"likelihood_weights" compute_uq(rw; method = :wald, vcov = :hessian)
     end
 
     # Weight 0 is removal, also for an individual whose log-likelihood is -Inf (#425).
@@ -1525,9 +1525,9 @@ end
         NoLimits.get_uq_vcov(uq0s; scale = :transformed) rtol = 1.0e-3
     # :hessian and :profile (also via :auto + interval = :profile) are rejected with weights.
     @test_throws ArgumentError compute_uq(rn2; method = :wald, vcov = :hessian)
-    @test_throws r"vcov = :hessian.*likelihood weights" compute_uq(rn2; method = :wald, vcov = :hessian)
-    @test_throws r"method = :profile.*likelihood weights" compute_uq(rn2; method = :profile)
-    @test_throws r"method = :profile.*likelihood weights" compute_uq(rn2; interval = :profile)
+    @test_throws r"vcov = :hessian.*likelihood_weights" compute_uq(rn2; method = :wald, vcov = :hessian)
+    @test_throws r"method = :profile.*likelihood_weights" compute_uq(rn2; method = :profile)
+    @test_throws r"method = :profile.*likelihood_weights" compute_uq(rn2; interval = :profile)
     @test NoLimits.get_uq_diagnostics(compute_uq(rn2; vcov = :sandwich, rng = Random.Xoshiro(1))).vcov == :sandwich
     @test NoLimits.get_uq_diagnostics(compute_uq(rn0; vcov = :hessian, rng = Random.Xoshiro(1))).vcov == :hessian
 
@@ -1547,4 +1547,185 @@ end
         s = sw[sw.fold .== fr.fold, :]
         @test fr.test_loglikelihood ≈ sum(s.weight .* s.loglikelihood)
     end
+end
+
+@testset "likelihood_weights: power conditional likelihood inside the integral (#434)" begin
+    ser = NoLimits.EnsembleSerial()
+    og = NoLimits.objective_and_gradient
+    # Subjects nested in experiments; ID differs from both grouping columns, so a copy of an
+    # individual under a new ID shares all of its random-effect levels.
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            ω_e = RealNumber(0.5, scale = :log)
+            ω_s = RealNumber(0.3, scale = :log)
+            σ = RealNumber(0.4, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η_e = RandomEffect(Normal(0.0, ω_e); column = :EXP)
+            η_s = RandomEffect(Normal(0.0, ω_s); column = :SUBJ)
+        end
+        @formulas begin
+            y ~ Normal(a + η_e + η_s + 0.2 * t, σ)
+        end
+    end
+    ids = repeat(1:4, inner = 3)
+    df = DataFrame(
+        ID = ids, EXP = [i <= 2 ? "A" : "B" for i in ids], SUBJ = ["s$(i)" for i in ids],
+        t = repeat([0.0, 1.0, 2.0], 4),
+        y = [1.1, 1.4, 1.5, 0.7, 0.8, 1.2, 1.9, 2.0, 2.4, 1.6, 1.7, 2.3]
+    )
+    df.v1 = ones(nrow(df))
+    df.v = [i == 1 ? 2.0 : 1.0 for i in ids]
+    df.vz = [i == 2 ? 0.0 : 1.0 for i in ids]
+    df.vr = [0.5, 0.5, 0.5, 3.0, 3.0, 3.0, 1.5, 1.5, 1.5, 0.25, 0.25, 0.25]
+    dup = df[df.ID .== 1, :]
+    dup.ID .= 5
+    mk(d; kw...) = DataModel(model, d; primary_id = :ID, time_col = :t, kw...)
+    dm0, dm1 = mk(df), mk(df; likelihood_weights = :v1)
+    dmv, dmz, dmr = mk(df; likelihood_weights = "v"), mk(df; likelihood_weights = :vz), mk(df; likelihood_weights = :vr)
+    # the duplicated and the reduced data carry unit weights (equal to unweighted, checked
+    # bitwise below), so every oracle compiles only for the weighted DataModel type
+    dmd, dmdel = mk(vcat(df, dup); likelihood_weights = :v1), mk(df[df.ID .!= 2, :]; likelihood_weights = :v1)
+    @test NoLimits.get_likelihood_weights(dm0) === nothing
+    @test NoLimits.get_likelihood_weights(dmr) == [0.5, 3.0, 1.5, 0.25]
+    @test NoLimits.get_weights(dmr) === nothing
+    θ = NoLimits.get_θ0_untransformed(NoLimits.get_fixed(model))
+    # experiment A of dmv takes the block-arrow path, its duplicate copy the dense one
+    _, bisv, ccv = NoLimits.build_re_batch_infos(dmv, NamedTuple())
+    _, bisd, ccd = NoLimits.build_re_batch_infos(dmd, NamedTuple())
+    batch_of(bis, i) = findfirst(b -> i in NoLimits.get_batch_individuals(b), bis)
+    @test NoLimits._ba_structure(dmv, bisv[batch_of(bisv, 1)], ccv) !== nothing
+    @test NoLimits._ba_structure(dmd, bisd[batch_of(bisd, 1)], ccd) === nothing
+
+    # FOCEI/FOCE with an exact-Newton inner solve: the default Gauss-Newton stops at a
+    # tolerance that leaves ~1e-7 between the weighted and the duplicated mode.
+    exact_inner = NoLimits.NewtonInner(curvature = NoLimits.ExactHessianCurvature(), x_abstol = 1.0e-14)
+    # v ≡ 1 is bitwise unweighted (Laplace: wrapper multiplier, FOCEI: per-observation
+    # scaling); v_i = 2 equals a duplicate for all marginal methods (FOCE: block-arrow
+    # gradient); v_i = 0 equals deletion (Laplace, FOCEI).
+    lap, focei = NoLimits.Laplace(), NoLimits.FOCEI(; inner_optimizer = exact_inner)
+    foce = NoLimits.FOCEI(; interaction = false, inner_optimizer = exact_inner)
+    for m in (lap, focei)
+        v0, g0 = og(m, dm0, θ)
+        v1, g1 = og(m, dm1, θ)
+        @test v1 == v0
+        @test collect(g1) == collect(g0)
+        vz, gz = og(m, dmz, θ)
+        vdl, gdl = og(m, dmdel, θ)
+        @test vz ≈ vdl rtol = 1.0e-10
+        @test collect(gz) ≈ collect(gdl) rtol = 1.0e-8
+    end
+    for m in (lap, focei, foce, NoLimits.GHQuadrature(level = 2))
+        vw, gw = og(m, dmv, θ)
+        vd, gd = og(m, dmd, θ)
+        @test vw ≈ vd rtol = 1.0e-10
+        @test collect(gw) ≈ collect(gd) rtol = 1.0e-8
+    end
+
+    # SAEM/MCEM: the E-step ignores the weights, the M-step applies them.
+    mc = NoLimits.MCEM(; maxiters = 2, progress = false)
+    draws0, _ = NoLimits.mcem_e_step(dm0, θ, mc, nothing; rng = Random.Xoshiro(1))
+    drawsr, _ = NoLimits.mcem_e_step(dmr, θ, mc, nothing; rng = Random.Xoshiro(1))
+    @test all(NoLimits.get_draws(a) == NoLimits.get_draws(b) for (a, b) in zip(draws0, drawsr))
+    q(d; kw...) = NoLimits.mcem_q_objective_and_gradient(d, θ, draws0; serialization = ser, kw...)
+    @test q(dm1)[1] == q(dm0)[1]
+    @test collect(q(dm1)[2]) == collect(q(dm0)[2])
+    @test q(dmv)[1] ≈ q(dmd)[1] rtol = 1.0e-12
+    @test collect(q(dmv)[2]) ≈ collect(q(dmd)[2]) rtol = 1.0e-10
+    @test !(q(dmr)[1] ≈ q(dm0)[1])
+    # v = 0 equals deletion at fixed draws: drop s2's coordinate from experiment A's draws;
+    # the values differ by s2's prior term only, which does not depend on a and σ.
+    _, bis0, _ = NoLimits.build_re_batch_infos(dm0, NamedTuple())
+    rc = NoLimits.get_laplace_cache(NoLimits.get_re_group_info(dm0))
+    ri = findfirst(==(:η_s), NoLimits.get_re_names(rc))
+    ia = batch_of(bis0, 1)
+    rinfo = NoLimits.get_re_info(bis0[ia])[ri]
+    lid = only(NoLimits.get_ind_level_ids(rc)[2][ri])
+    s2 = NoLimits.get_ranges(rinfo)[NoLimits.get_level_to_index(NoLimits.get_re_map(rinfo))[lid]]
+    keep = setdiff(1:NoLimits.get_n_b(bis0[ia]), s2)
+    _, bisdel, _ = NoLimits.build_re_batch_infos(dmdel, NamedTuple())
+    draws_del = [
+        1 in NoLimits.get_batch_individuals(b) ?
+            NoLimits.RandomEffectPosteriorSample(NoLimits.get_draws(draws0[ia])[keep, :], nothing, nothing, :mcmc) :
+            draws0[3 - ia] for b in bisdel
+    ]
+    gz = q(dmz; free_names = [:a, :σ])[2]
+    gdel = NoLimits.mcem_q_objective_and_gradient(dmdel, θ, draws_del; serialization = ser, free_names = [:a, :σ])[2]
+    @test collect(gz) ≈ collect(gdel) rtol = 1.0e-10
+    # MCEM importance sampling: draws and IS weights ignore the likelihood weights.
+    mis = NoLimits.MCEM(; e_step = NoLimits.MCEM_IS(; n_samples = 20), maxiters = 2, progress = false)
+    is0, _ = NoLimits.mcem_e_step(dm0, θ, mis, nothing; rng = Random.Xoshiro(3))
+    isr, _ = NoLimits.mcem_e_step(dmr, θ, mis, nothing; rng = Random.Xoshiro(3))
+    @test all(NoLimits.get_draws(a) == NoLimits.get_draws(b) for (a, b) in zip(is0, isr))
+    @test all(NoLimits.get_log_weights(a) == NoLimits.get_log_weights(b) for (a, b) in zip(is0, isr))
+    # closed form: σ² = Σ v_i SS_i / Σ v_i n_i, ω from the RE statistics without v
+    sv, sd = NoLimits.saem_sufficient_statistics(dmv, θ, draws0), NoLimits.saem_sufficient_statistics(dmd, θ, draws0)
+    @test sv.outcome.y.s1 ≈ sd.outcome.y.s1 rtol = 1.0e-12
+    @test sv.outcome.y.n ≈ sd.outcome.y.n
+    sr, s0 = NoLimits.saem_sufficient_statistics(dmr, θ, draws0), NoLimits.saem_sufficient_statistics(dm0, θ, draws0)
+    @test sr.re.η_s.second ≈ s0.re.η_s.second rtol = 1.0e-12
+    @test sr.outcome.y.n / s0.outcome.y.n ≈ sum([0.5, 3.0, 1.5, 0.25]) / 4
+    upd, _ = NoLimits.saem_closed_form_mstep(dmr, sr, nothing, θ, 1.0)
+    θcf = ComponentArray(merge(NamedTuple(θ), (; σ = upd.σ)))
+    gσ(d) = NoLimits.mcem_q_objective_and_gradient(
+        d, θcf, draws0; free_names = [:σ], scale = :untransformed, serialization = ser
+    )[2][:σ]
+    @test abs(gσ(dmr)) < 1.0e-6
+    @test abs(gσ(dm0)) > 1.0e-3
+    llc0 = NoLimits.build_ll_cache(dm0; serialization = ser, force_saveat = true)
+    saem = NoLimits.SAEM(; maxiters = 3, q_store_max = 2)
+    fit_s(d) = fit_model(d, saem; serialization = ser, rng = Random.Xoshiro(2), store_eb_modes = false)
+    @test collect(NoLimits.get_params(fit_s(dm1); scale = :transformed)) ==
+        collect(NoLimits.get_params(fit_s(dm0); scale = :transformed))
+    for mfit in (saem, NoLimits.MCEM(; maxiters = 2, progress = false))
+        fit(d; kw...) = fit_model(d, mfit; serialization = ser, rng = Random.Xoshiro(2), store_eb_modes = false, kw...)
+        # the reported EBEs are the modes of the unweighted conditional posterior at θ̂
+        rw = fit(dmr; store_eb_modes = true)
+        θw = NoLimits.get_params(rw; scale = :untransformed)
+        modes(d) = first(NoLimits._compute_bstars(d, θw, NamedTuple(), llc0, NoLimits._default_ebe_options(), Random.Xoshiro(1)))
+        stored = NoLimits.get_eb_modes(NoLimits.get_result(rw))
+        @test all(isapprox.(stored, modes(dm0); rtol = 1.0e-5, atol = 1.0e-7))
+        @test !all(isapprox.(stored, modes(dmr); rtol = 1.0e-5, atol = 1.0e-7))
+    end
+    # Post-fit draws of a Laplace fit come from the unweighted conditional posterior at θ̂.
+    # (a weighted fit stores the modes of its weighted integrand; its draws equal those of an
+    # unweighted fit at the same θ, whose stored modes are the unweighted ones)
+    eb(d) = NoLimits.empirical_bayes(NoLimits.build_fit_context(d), θ)
+    fr(d) = NoLimits.build_fit_result(
+        d, NoLimits.Laplace(), θ; kind = :frequentist_re, objective = 0.0, eb_modes = eb(d),
+        fit_kwargs = (; rng = Random.Xoshiro(9))
+    )
+    sw_ = sample_random_effects(dmr, fr(dmr); n_samples = 4, rng = Random.Xoshiro(7))
+    s0_ = sample_random_effects(dm0, fr(dm0); n_samples = 4, rng = Random.Xoshiro(7))
+    for re in (:η_e, :η_s)
+        @test getproperty(sw_, re)[!, end] ≈ getproperty(s0_, re)[!, end] rtol = 1.0e-6
+    end
+    @test !(sample_random_effects(dm0, fr(dmr); n_samples = 4, rng = Random.Xoshiro(7)).η_s[!, end] ≈ s0_.η_s[!, end])
+    @test_throws ArgumentError fit_model(dmr, NoLimits.SAEM(; suffstats = (args...) -> nothing))
+    @test_throws ArgumentError fit_model(dmr, NoLimits.MCMC(; sampler = MH()))
+
+    # No random effects: MLE, Wald sandwich by default, CV totals weighted by v.
+    mn = fx_nore_model()
+    dfn = copy(fx_nore_df())
+    dfn.v1 = ones(nrow(dfn))
+    dfn.v = [id == 1 ? 2.0 : 1.0 for id in dfn.ID]
+    dupn = dfn[dfn.ID .== 1, :]
+    dupn.ID .= maximum(dfn.ID) + 1
+    mkn(d; kw...) = DataModel(mn, d; primary_id = :ID, time_col = :t, kw...)
+    θn = NoLimits.get_θ0_untransformed(NoLimits.get_fixed(mn))
+    vw, gw = og(NoLimits.MLE(), mkn(dfn; likelihood_weights = :v), θn)
+    vd, gd = og(NoLimits.MLE(), mkn(vcat(dfn, dupn)), θn)
+    @test vw ≈ vd rtol = 1.0e-12
+    @test collect(gw) ≈ collect(gd) rtol = 1.0e-10
+    rn = fit_model(mkn(dfn; likelihood_weights = :v), NoLimits.MLE(); serialization = ser)
+    @test NoLimits.get_uq_diagnostics(compute_uq(rn; method = :wald, rng = Random.Xoshiro(1))).vcov == :sandwich
+    @test_throws r"vcov = :hessian.*batch `weights` only" compute_uq(rn; method = :wald, vcov = :hessian)
+    @test_throws r"method = :profile.*likelihood_weights" compute_uq(rn; method = :profile)
+    cv = cross_validate(mkn(dfn; likelihood_weights = :v), 2; rng = Random.MersenneTwister(3))
+    sw = get_obs_scores(fit_cv(cv, NoLimits.MLE(); rng = Random.MersenneTwister(1)))
+    @test sw.weight == [id == 1 ? 2.0 : 1.0 for id in sw.individual]
 end

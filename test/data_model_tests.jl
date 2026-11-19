@@ -6,6 +6,7 @@ using Distributions
 using SciMLBase
 using DataInterpolations
 using LinearAlgebra
+using Random
 using SentinelArrays: ChainedVector
 
 @testset "row-varying RE capability detection" begin
@@ -1941,7 +1942,7 @@ end
     @test !NoLimits._obs_is_missing([0.1, 0.2])
 end
 
-@testset "likelihood weights column validation" begin
+@testset "batch and likelihood weights column validation" begin
     mk(d; kw...) = DataModel(fx_re_model(), d; primary_id = :ID, time_col = :t, kw...)
     base = copy(fx_re_df())
     ok = copy(base)
@@ -1971,4 +1972,20 @@ end
     @test_throws r"differs within a batch" DataModel(
         fx_mg_model(), mg; primary_id = :ID, time_col = :t, weights = :w
     )
+
+    # likelihood_weights: the same checks, but they may differ within a batch (#434).
+    dmv = DataModel(fx_mg_model(), mg; primary_id = :ID, time_col = :t, likelihood_weights = :w)
+    @test NoLimits.get_likelihood_weights(dmv) == [3.0, 1.0, 1.0, 1.0]
+    @test NoLimits.get_weights(dmv) === nothing
+    @test NoLimits.get_likelihood_weights(mk(base)) === nothing
+    @test_throws r"varies within ID 1" mk(bad((id, r) -> id == 1 ? Float64(r) : 1.0); likelihood_weights = :w)
+    @test_throws r"negative weight" mk(bad((id, r) -> id == 3 ? -1.0 : 1.0); likelihood_weights = :w)
+    @test_throws r"non-finite" mk(bad((id, r) -> id == 3 ? NaN : 1.0); likelihood_weights = :w)
+    @test_throws r"no positive weight" mk(bad((id, r) -> 0.0); likelihood_weights = :w)
+    @test_throws r"missing values" mk(bad((id, r) -> id == 2 ? missing : 1.0); likelihood_weights = :w)
+    @test_throws ErrorException mk(base; likelihood_weights = :nope)
+
+    # Simulation ignores likelihood weights.
+    sim(d) = simulate_data(d; rng = Random.Xoshiro(4))
+    @test isequal(sim(mk(ok)), sim(mk(ok; likelihood_weights = :w)))
 end

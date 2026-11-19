@@ -627,7 +627,8 @@ end
     sample_random_effect_draws(dm, θ, batch::REBatchInfo, b_star; method=:importance, sampler=nothing, n_samples=100, n_adapt=50, const_cache, cache=nothing, rng=Random.default_rng()) -> RandomEffectPosteriorSample
     sample_random_effect_draws(dm, θ; method=:importance, sampler=nothing, n_samples=100, constants_re=NamedTuple(), rng=Random.default_rng(), ...) -> Vector{RandomEffectPosteriorSample}
 
-Draw from the random-effect posterior `p(η | y, θ)`.
+Draw from the random-effect posterior `p(η | y, θ)`. `likelihood_weights` of the `DataModel`
+are ignored here, as in the SAEM/MCEM E-step.
 
 - `method=:importance` (default, Turing-free): Laplace-Gaussian importance sampling - a Gaussian
   proposal centered at the mode `b_star` with covariance `(−H)⁻¹`
@@ -659,7 +660,7 @@ function sample_random_effect_draws(
         re_names = get_re_names(get_random(get_model(dm)))
         tkw = (n_samples = n_samples, n_adapt = n_adapt, progress = false)
         samples, _, _ = _mcem_sample_batch(
-            dm, batch, θ_re, const_cache, c, sampler, tkw, rng, re_names, false, nothing
+            _sampling_dm(dm), batch, θ_re, const_cache, c, sampler, tkw, rng, re_names, false, nothing
         )
         return RandomEffectPosteriorSample(samples, nothing, nothing, :mcmc)
     elseif method === :importance
@@ -669,7 +670,7 @@ function sample_random_effect_draws(
             Float64(n_samples), :importance
         )
         Σ = empirical_bayes_covariance(
-            dm, θ_re, batch, b_star; const_cache = const_cache, cache = c
+            _sampling_dm(dm), θ_re, batch, b_star; const_cache = const_cache, cache = c
         )
         Σ === nothing &&
             return RandomEffectPosteriorSample(zeros(n_b, 0), Float64[], 0.0, :importance)
@@ -680,7 +681,7 @@ function sample_random_effect_draws(
             b_r = rand(rng, q)
             @inbounds draws[:, r] = b_r
             logp = complete_data_loglikelihood(
-                dm, batch, θ_re, b_r; const_cache = const_cache, cache = c
+                _sampling_dm(dm), batch, θ_re, b_r; const_cache = const_cache, cache = c
             )
             @inbounds logw[r] = logp - logpdf(q, b_r)
         end
@@ -1436,7 +1437,8 @@ end
         -> (draws::Vector{RandomEffectPosteriorSample}, new_state)
 
 Run ONE MCEM E-step at `θ`, exactly as one iteration of the MCEM fit loop does: it draws
-`p(η_b | y_b, θ)` per batch with the method's sampler (`method.e_step`), honoring
+`p(η_b | y_b, θ)` per batch with the method's sampler (`method.e_step`; `likelihood_weights`
+are ignored, as in the fit), honoring
 `sample_schedule` and warm-start (every batch is refreshed). Pass `state === nothing` on the first
 call (reproduces the fit's prior-mean seeding); thread the returned `new_state` into the
 next call so warm-start / IS-proposal adaptation / per-batch RNGs persist across iterations.
@@ -1450,7 +1452,9 @@ function mcem_e_step(
         rng::AbstractRNG = Random.default_rng(),
         constants_re::Union{NamedTuple, AbstractDict} = NamedTuple()
     )
-    st = state === nothing ? _mcem_estep_init(dm, θ, method, rng, constants_re) : state
+    # draws target the unweighted conditional posterior (likelihood weights act on the M-step)
+    dm_s = _sampling_dm(dm)
+    st = state === nothing ? _mcem_estep_init(dm_s, θ, method, rng, constants_re) : state
     batch_infos = st.batch_infos
     nb = length(batch_infos)
     iter = st.iter
@@ -1468,7 +1472,7 @@ function mcem_e_step(
         for bi in updated
             info = batch_infos[bi]
             samples, lastp, _ = _mcem_sample_batch(
-                dm, info, θ, st.const_cache, st.cache1, mcmc_es.sampler, tkwargs,
+                dm_s, info, θ, st.const_cache, st.cache1, mcmc_es.sampler, tkwargs,
                 st.batch_rngs[bi], st.re_names, mcmc_es.warm_start, st.last_params[bi];
                 outer_iter = iter
             )
@@ -1491,7 +1495,7 @@ function mcem_e_step(
         for bi in updated
             info = batch_infos[bi]
             samps, log_ws, ess = _is_sample_batch(
-                dm, info, θ, st.const_cache, st.cache1, st.batch_rngs[bi],
+                dm_s, info, θ, st.const_cache, st.cache1, st.batch_rngs[bi],
                 st.re_names, st.re_types, is_es, st.proposal_blocks[bi]
             )
             st.samples_by_batch[bi] = samps
@@ -1637,7 +1641,7 @@ Federated aggregation: `outcome`/`hmm` fields are plain sums (add directly acros
 then re-dividing by the pooled `n`. The `idx` form returns batch `idx`'s contribution; summed
 this way over batches it equals the population form (the per-subject seam for DP / federation).
 Draws are treated as equally-weighted MCMC draws, matching the SAEM MH sampler.
-With likelihood weights ([`get_weights`](@ref)) every contribution is multiplied by its
+With batch weights ([`get_weights`](@ref)) every contribution is multiplied by its
 batch weight and `n` is the summed weight, so the aggregation rule above is unchanged.
 """
 function saem_sufficient_statistics(

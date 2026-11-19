@@ -21,7 +21,7 @@ effects (e.g. neural networks) and many random effects.
 ## Applicability
 
 - Requires a model with random effects and at least one free fixed effect.
-- `penalty`, `extra_objective` and likelihood weights of the `DataModel` are supported (see
+- `penalty`, `extra_objective` and the batch and likelihood weights of the `DataModel` are supported (see
   [Penalties and Weights](#Penalties-and-Weights));
   fixed-effect priors are ignored.
 - Any continuous random-effect distribution is supported with the default `adtype`
@@ -126,7 +126,7 @@ res = fit_model(
 )
 ```
 
-Likelihood weights of the `DataModel` (`DataModel(...; weights = :w)`) multiply the ELBO
+Batch weights of the `DataModel` (`DataModel(...; weights = :w)`) multiply the ELBO
 term of each random-effect batch, and its marginal-likelihood term in the `refine` step and
 in the reported objective, so a weight of 2 is equivalent to a duplicated individual. The
 optimal variational distribution of a batch does not depend on its weight. Random-effect
@@ -135,6 +135,8 @@ values, counted once per fixed level (not once per batch that contains it), and 
 free levels (and hence without variational distribution) with its log-likelihood at the fixed
 values. Batches of weight zero do not enter the objective; their reported variational
 distribution is the Laplace approximation at ``\hat\theta``.
+
+With `DataModel(...; likelihood_weights = :v)` each individual's conditional log-likelihood in the ELBO is multiplied by its weight, so `q` approximates the posterior of the weighted integrand of [Conditional-Likelihood Weights](../data-model-construction.md#Conditional-Likelihood-Weights). `sample_random_effects` therefore does not draw from `q` in this case but from the Laplace approximation of the unweighted conditional posterior at ``\hat\theta``.
 
 ## Variational Options
 

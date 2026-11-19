@@ -311,6 +311,14 @@ function sample_posterior(
 end
 
 function _fit_model(dm::DataModel, method::MCMC, args...; kwargs...)
+    get_likelihood_weights(dm) === nothing ||
+        throw(
+        ArgumentError(
+            "MCMC does not support likelihood_weights. They are " *
+                "supported by Laplace, FOCEI/FOCE, GHQuadrature, MLE/MAP/Pooled, VEM/VI and " *
+                "SAEM/MCEM (weighted M-step). Rebuild the DataModel without likelihood_weights."
+        )
+    )
     _require_ext(:NoLimitsTuringExt, :Turing, "Fitting with `MCMC`")
     return _mcmc_fit_impl(dm, method, args...; kwargs...)
 end

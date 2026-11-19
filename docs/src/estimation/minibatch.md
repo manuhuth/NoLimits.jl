@@ -70,7 +70,7 @@ callback advances the schedule). With Optimisers.jl rules, finite bounds (model 
 `AcceptedWarmStarts` requires `schedule = :all`.
 
 For `VEM` (stochastic variational EM) the objective is `-(K/|B|) Σ_{i∈B} w_i ELBO_i(θ, κ_i)`
-over the `K` batches with random effects (`w_i` the likelihood weights, 1 without a weight
+over the `K` batches with random effects (`w_i` the batch weights, 1 without a weight
 column), plus the unscaled `penalty` and `extra_objective`. Its gradient is the unbiased estimate of the
 gradient of the full negative ELBO with respect to the fixed effects and all variational
 parameters: the variational parameters `κ_i` of an unselected batch do not enter it and get
@@ -90,7 +90,7 @@ the E-step of each iteration. The `em_variant` keyword chooses the M-step:
   selected keep their draws from the iteration that last visited them, and the M-step uses
   all batches. This trades a small bias from draws made under an older `θ` for a cheaper
   E-step.
-- `:scaled`: the M-step uses only the selected batches, with their likelihood weights
+- `:scaled`: the M-step uses only the selected batches, with their batch weights
   multiplied by `nbatches / |B|`, an unbiased estimate of the full-data Q-function. The
   M-step cost then also scales with `|B|`. For `SAEM` it requires
   `mstep_sa_on_params = true` (the default) and no custom `suffstats`. The reported

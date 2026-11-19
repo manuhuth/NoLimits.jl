@@ -1827,7 +1827,7 @@ function get_random_effects(
                 serialization = serialization, force_saveat = true
             )
             bstars, batch_infos = _compute_bstars(
-                dm, θu, constants_re, ll_cache, get_method(res).ebe, rng;
+                _sampling_dm(dm), θu, constants_re, ll_cache, get_method(res).ebe, rng;
                 rescue = get_method(res).ebe_rescue
             )
         else
@@ -1865,7 +1865,7 @@ function get_random_effects(
                 _saem_opts.ebe_multistart_max_rounds, _saem_opts.ebe_multistart_sampling
             )
             bstars, batch_infos = _compute_bstars(
-                dm, θu, constants_re, ll_cache, ebe, rng;
+                _sampling_dm(dm), θu, constants_re, ll_cache, ebe, rng;
                 rescue = _saem_opts.ebe_rescue
             )
         else
@@ -2009,6 +2009,10 @@ function _laplace_type_bstars(
     )
     bstars = get_eb_modes(get_result(res))
     bstars === nothing || return bstars
+    return _laplace_type_modes(dm, res, θu, constants_re, ll_cache, rng)
+end
+
+function _laplace_type_modes(dm::DataModel, res::FitResult, θu, constants_re::NamedTuple, ll_cache, rng::AbstractRNG)
     m = get_method(res)
     ebe = hasproperty(m, :ebe) && m.ebe isa EBEOptions ? m.ebe : _default_ebe_options()
     rescue = hasproperty(m, :ebe_rescue) && m.ebe_rescue isa EBERescueOptions ?
@@ -2018,6 +2022,13 @@ function _laplace_type_bstars(
     )
     return bstars
 end
+
+# Post-fit draws of the random effects ignore likelihood weights: for a weighted DataModel
+# the Laplace-type modes are recomputed for the unweighted DataModel at θ̂ (VEM included,
+# whose q was fitted to the weighted objective). The identity when unweighted.
+_sampling_bstars(dm::DataModel{M, D, I, P, C, K, G, R, Nothing}, res, bstars, θu, constants_re, ll_cache, rng) where {M, D, I, P, C, K, G, R} = bstars
+_sampling_bstars(dm::DataModel, res, bstars, θu, constants_re, ll_cache, rng) =
+    _laplace_type_modes(_sampling_dm(dm), res, θu, constants_re, ll_cache, rng)
 
 function _resolve_bstars_for_re(
         dm::DataModel, res::FitResult, constants_re::NamedTuple;
@@ -2052,7 +2063,7 @@ function _resolve_bstars_for_re(
         bstars = get_eb_modes(get_result(res))
         if bstars === nothing
             bstars, batch_infos = _compute_bstars(
-                dm, θu, constants_re, ll_cache, get_method(res).ebe, rng;
+                _sampling_dm(dm), θu, constants_re, ll_cache, get_method(res).ebe, rng;
                 rescue = get_method(res).ebe_rescue
             )
             _, _, const_cache = _build_re_batch_infos(dm, constants_re)
@@ -2085,7 +2096,7 @@ function _resolve_bstars_for_re(
                 _saem_opts.ebe_multistart_max_rounds, _saem_opts.ebe_multistart_sampling
             )
             bstars, batch_infos = _compute_bstars(
-                dm, θu, constants_re, ll_cache, ebe, rng;
+                _sampling_dm(dm), θu, constants_re, ll_cache, ebe, rng;
                 rescue = _saem_opts.ebe_rescue
             )
             _, _, const_cache = _build_re_batch_infos(dm, constants_re)
@@ -2289,7 +2300,7 @@ function _sample_mcmc_bstars_raw(
                 continue
             end
             samples_mat, lastp, lastb = _mcem_sample_batch(
-                dm, info, θu, const_cache, ll_cache_local, sampler, sweep_kwargs,
+                _sampling_dm(dm), info, θu, const_cache, ll_cache_local, sampler, sweep_kwargs,
                 batch_rngs[bi], re_names, warm_start, last_params[bi]
             )
             last_params[bi] = lastp
@@ -2306,18 +2317,20 @@ end
 # :conditional CV path and predict's :marginal mode.
 function _sample_conditional_bstars(
         dm::DataModel, batch_infos, bstars, θu, const_cache,
-        ll_cache, res::FitResult, n_samples::Int, rng::AbstractRNG
+        ll_cache, res::FitResult, n_samples::Int, rng::AbstractRNG;
+        constants_re::NamedTuple = _res_constants_re(res, NamedTuple())
     )
     lcl = ll_cache isa Vector ? ll_cache[1] : ll_cache
-    if _is_vem_fit(res)
+    if _is_vem_fit(res) && get_likelihood_weights(dm) === nothing
         return _sample_vem_bstars_raw(
             dm, batch_infos, bstars, θu, const_cache, lcl, res;
             n_samples = n_samples, rng = rng
         )
     elseif get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult
         return _sample_laplace_bstars_raw(
-            dm, batch_infos, bstars, θu, const_cache, lcl;
-            n_samples = n_samples, rng = rng
+            _sampling_dm(dm), batch_infos,
+            _sampling_bstars(dm, res, bstars, θu, constants_re, ll_cache, rng),
+            θu, const_cache, lcl; n_samples = n_samples, rng = rng
         )
     elseif get_result(res) isa MCEMResult || get_result(res) isa SAEMResult
         method_sampler, method_tkwargs = if get_result(res) isa MCEMResult
@@ -2385,6 +2398,10 @@ conditional distribution, so the draws are consistent with the E-step:
   sampler used in the E-step (Turing sampler for MCEM, `SaemixMH` or Turing
   sampler for SAEM), seeded at the EBE mode.
 
+The draws ignore `likelihood_weights` (see [`get_likelihood_weights`](@ref)): with them,
+`Laplace`/`GHQuadrature`/`VEM` fits draw from the Laplace approximation of the unweighted
+conditional posterior at ``\\hat{\\theta}``, whose mode is recomputed.
+
 For batched random effects (e.g. blockwise MCEM/SAEM), the batch is sampled
 jointly and split per individual.
 
@@ -2432,7 +2449,7 @@ function sample_random_effects(
     )
     isempty(batch_infos) && return NamedTuple()
 
-    if _is_vem_fit(res)
+    if _is_vem_fit(res) && get_likelihood_weights(dm) === nothing
         raw = _sample_vem_bstars_raw(
             dm, batch_infos, bstars, θu, const_cache,
             ll_cache isa Vector ? ll_cache[1] : ll_cache, res;
@@ -2442,8 +2459,9 @@ function sample_random_effects(
     end
     if get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult
         return _sample_re_laplace_path(
-            dm, res, constants_re,
-            bstars, batch_infos, θu, const_cache, ll_cache;
+            _sampling_dm(dm), res, constants_re,
+            _sampling_bstars(dm, res, bstars, θu, constants_re, ll_cache, rng),
+            batch_infos, θu, const_cache, ll_cache;
             n_samples = n_samples, rng = rng,
             flatten = flatten,
             include_constants = include_constants,
@@ -2624,8 +2642,10 @@ function reestimate_ebes(
             active_batch_indices
         )
     end
+    # SAEM/MCEM report the modes of the unweighted conditional posterior
     bstars, batch_infos = _compute_bstars(
-        dm, θu, constants_re, ll_cache, ebe, rng;
+        get_result(res) isa Union{MCEMResult, SAEMResult} ? _sampling_dm(dm) : dm,
+        θu, constants_re, ll_cache, ebe, rng;
         rescue = ebe_rescue, progress = progress,
         mcmc_candidates_by_batch = mcmc_candidates,
         active_batch_indices = active_batch_indices
@@ -2690,6 +2710,12 @@ depends on the method:
   random-effect prior term. The EB modes are recomputed when the fit was run with
   `store_eb_modes = false`.
 - GHQuadrature: the sparse-grid marginal log-likelihood at `θ̂`.
+
+With `weights` and `likelihood_weights` (see [`get_weights`](@ref),
+[`get_likelihood_weights`](@ref)) the value is the weighted pseudo log-likelihood: for the
+conditional methods `Σ_i w_i v_i log p(y_i | η̂_i, θ̂)`, where `η̂` are the modes of the
+weighted integrand for Laplace/FOCEI/VEM and of the unweighted conditional posterior for
+SAEM/MCEM.
 
 For model comparison across random-effect methods use
 [`get_marginal_likelihood`](@ref), which integrates the random effects out.
@@ -3262,7 +3288,7 @@ function _cdll_terms(
             push!(seen, (ri, li))
             v += logpdf(level_dist[ri][li], getval(ri, li))
         end
-        # Likelihood weights as in `loglikelihood` (weight 0 is removal).
+        # Batch weights as in `loglikelihood` (weight 0 is removal).
         w = _ind_weight(dm, i)
         vals[k] = iszero(w) ? zero(T) : w * v
     end
@@ -3278,7 +3304,7 @@ end
 Joint (complete-data) log-density `ln p(y, η | θ)` for a random-effects model: the
 per-individual observation log-likelihood plus the random-effect prior summed once per
 grouping level. With no random effects it reduces to the population log-likelihood.
-With likelihood weights (`DataModel(...; weights)`) each individual's term, including the
+With batch weights (`DataModel(...; weights)`) each individual's term, including the
 random-effect prior it carries, is multiplied by its weight, so an integer weight `k`
 equals `k` copies of the individual.
 
@@ -3310,7 +3336,7 @@ Per-individual breakdown of [`complete_data_loglikelihood`](@ref) (same argument
 `DataFrame` with the `primary_id` column and a `:complete_data_loglikelihood` column
 giving, for each selected individual, its observation log-likelihood plus the
 random-effect prior of any grouping level it is the first to contribute, multiplied by
-the individual's likelihood weight. The values sum
+the individual's batch weight. The values sum
 to `complete_data_loglikelihood` called with the same arguments. Useful for inspecting
 per-subject fit before running an estimation.
 """
@@ -4246,7 +4272,7 @@ end
 # The guard sits in this thin wrapper, not around the body, so the hot path is untouched.
 function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache)
     try
-        return __loglikelihood_individual(dm, idx, θ, η_ind, cache)
+        return _lik_weight(dm.likelihood_weights, idx, __loglikelihood_individual(dm, idx, θ, η_ind, cache))
     catch err
         _is_numeric_error(err) || rethrow(err)
         if !Threads.atomic_cas!(_WARNED_NUMERIC_ERROR, false, true)
@@ -4256,9 +4282,12 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
                 "check those domains in @formulas / @DifferentialEquation. " *
                 "Warned once per fit."
         end
-        return -Inf
+        return _lik_weight(dm.likelihood_weights, idx, -Inf)
     end
 end
+# Likelihood weights (`DataModel(...; likelihood_weights)`) are applied in the wrapper above,
+# so every objective sees p(y_i | η, θ)^v_i; `_lik_weight` is the identity when unweighted.
+# The comment sits here so the wrapper keeps its line numbers (they enter its compiled code).
 
 function __loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache)
     model = get_model(dm)

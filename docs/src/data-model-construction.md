@@ -24,7 +24,8 @@ The key constructor arguments are:
 - `evid_col` (default `nothing`): enables event-table parsing for ODE models (see below).
 - `amt_col` (default `:AMT`), `rate_col` (default `:RATE`), `cmt_col` (default `:CMT`): event-related columns, used when `evid_col` is set.
 - `serialization` (default `EnsembleSerial()`): controls parallel execution mode; use `EnsembleThreads()` for multi-threaded evaluation.
-- `weights` (default `nothing`): a column of per-individual likelihood weights, see [Likelihood Weights](#Likelihood-Weights).
+- `weights` (default `nothing`): a column of per-individual batch weights, see [Batch Weights](#Batch-Weights).
+- `likelihood_weights` (default `nothing`): a column of per-individual conditional-likelihood weights that may differ within a batch, see [Conditional-Likelihood Weights](#Conditional-Likelihood-Weights).
 
 The examples below always pass these explicitly, but if you omit them the defaults above apply (so a dataset whose time column is named `TIME` and whose event columns are named `AMT`/`RATE`/`CMT` needs no overrides).
 
@@ -245,10 +246,10 @@ ensures coarsed-state likelihoods are used only when explicitly requested.
 - **Constant covariate consistency**: constant covariates must be constant within `primary_id` and within all declared `constant_on` groups.
 - **Random-effect covariate dependencies**: random-effect distributions that use covariates require those covariates to be `ConstantCovariate` or `ConstantCovariateVector`.
 - **Formula time offsets**: constant time offsets in formulas (e.g., `x1(t - 0.5)`) extend the integration window automatically. Offsets that push evaluation before `t = 0` are rejected. Non-constant offsets require `saveat_mode = :dense`.
-- **Likelihood weights**: a `weights` column must be numeric, finite, nonnegative, constant within each individual, contain a positive value, and be equal within each batch of individuals that share random-effect levels.
+- **Batch and likelihood weights**: a `weights` column must be numeric, finite, nonnegative, constant within each individual, contain a positive value, and be equal within each batch of individuals that share random-effect levels. A `likelihood_weights` column has the same requirements except the equality within a batch.
 - **PreDE random-effect constraint**: random effects used in `@preDifferentialEquation` must be constant within each `primary_id` group. Grouping by `primary_id` or by a coarser level (e.g. a site column that never changes within an individual) is allowed. A grouping column that varies within an individual is rejected.
 
-## Likelihood Weights
+## Batch Weights
 
 `DataModel(model, df; weights = :w)` attaches a weight `w_i` to each individual. Every estimator then maximizes the weighted objective
 
@@ -262,13 +263,34 @@ How the methods use the weights:
 
 - `Laplace`, `FOCEI`, `GHQuadrature`, `MLE`, `MAP`, `Pooled`: each batch contribution to the marginal (or conditional) log-likelihood is multiplied by its weight, including the log-determinant terms. The empirical Bayes modes are unaffected, since the weight of a batch does not change its optimum.
 - `VEM`: the ELBO term of each batch is multiplied by its weight, as is its marginal log-likelihood term in the refinement step and in the reported objective. The fitted variational distributions are unaffected, since the weight of a batch does not change its optimum.
-- `MCMC`, `VI`: the log-likelihood is weighted; the priors on fixed and random effects are not.
+- `MCMC`, `VI`: each individual's conditional log-likelihood is multiplied by its weight, inside the sampled posterior; the priors on fixed and random effects are not weighted. The random-effect density is therefore not multiplied, whereas all other estimators multiply the whole log marginal likelihood of each batch.
 - `SAEM`, `MCEM`: the E-step samples from the unweighted conditional distributions. The M-step objective weights each batch, and the closed-form updates use weighted sufficient statistics divided by the summed weights. User-supplied `suffstats` functions receive the `DataModel` and must apply `get_weights(dm)` themselves.
 - `get_loglikelihood` and the marginal likelihood accessors return the weighted value. `complete_data_loglikelihood` and `complete_data_loglikelihood_per_individual` multiply each individual's term, including the random-effect prior it carries, by its weight; the batch-level method-developer functions (`complete_data_loglikelihood(dm, batch, θ, b)`) stay unweighted.
 - `Multistart(; screening = :ebe)` weights each individual's joint log-density in the screening score.
 - An individual (or batch) of weight 0 is skipped before it is evaluated, so it is equivalent to removing it even when its log-likelihood is not finite.
 - `compute_uq(res; method = :wald)` uses the sandwich covariance `H^{-1} B H^{-1}` with `B = \sum_b w_b^2 g_b g_b^T` when the data model is weighted (`vcov = :auto` selects it). The inverse Hessian of a weighted objective is not a covariance estimate, so `vcov = :hessian` and `method = :profile` (whose likelihood-ratio cutoff relies on it) throw an `ArgumentError`. The valid options for a weighted data model are `method = :wald` with `vcov = :sandwich` or `:auto`, `method = :mcmc_refit`, and `method = :chain` for `MCMC`/`VI` fits.
 - `fit_cv` adds a `:weight` column to `get_obs_scores` and weights each held-out individual's scores by its weight in the fold totals; `mean_obs_loglikelihood` divides the weighted sum by the summed weights of the scored observations. The per-row `:loglikelihood` values stay unweighted. Pass `weighted = false` for unweighted totals. The training fits are weighted either way.
+
+## Conditional-Likelihood Weights
+
+`weights` multiplies the log marginal likelihood of a batch and therefore has to be equal for all individuals that share a random-effect level. `DataModel(model, df; likelihood_weights = :v)` attaches a weight `v_i` to the conditional likelihood of each individual instead, and `v_i` may differ within a batch. The objective of the marginal-likelihood methods is
+
+```math
+\sum_b w_b \, \ln \int \prod_{i \in b} p(y_i \mid \eta, \theta)^{v_i} \, p(\eta \mid \theta) \, d\eta,
+```
+
+with `w_b = 1` when no `weights` column is given. Each individual's conditional likelihood is raised to the power `v_i` inside the integral; the random-effect density and the priors are not weighted. An integer weight `k` gives the same objective as `k` copies of the individual that share its random-effect levels (all grouping columns except `primary_id`), and `v_i = 0` removes the individual's observations while its random-effect levels stay in the model. The column must be constant within each individual, finite and nonnegative, with at least one positive value. `get_likelihood_weights(dm)` returns the per-individual weights, or `nothing`. The two keywords can be combined.
+
+How the methods use `likelihood_weights`:
+
+- `Laplace` (every curvature), `FOCEI`/`FOCE`, `GHQuadrature`, `MLE`, `MAP`, `Pooled`, `VEM`, `VI`: the objective above. The empirical Bayes modes, the inner curvature and the variational distributions are those of the weighted integrand, so they change with `v_i`. `FOCEI` scales the expected information and the score of each observation by its individual's `v_i`.
+- `SAEM`, `MCEM`: the E-step samples (and the importance weights of `MCEM_IS`) target the unweighted conditional distribution `p(η | y, θ)`. The weights enter only the M-step: the Q-function is `Σ_b w_b E[Σ_{i∈b} v_i ln p(y_i | η, θ) + ln p(η | θ)]` and the closed-form outcome statistics are scaled by `w_b v_i` (for example `σ² = Σ v_i SS_i / Σ v_i n_i`), while the random-effect statistics carry only `w_b`. This is a weighted complete-data EM, an estimating equation that differs from the maximizer of the objective above. User-supplied `suffstats`, `q_from_stats` and `mstep_closed_form` are rejected with `likelihood_weights`. The final empirical Bayes modes (`get_random_effects`) are the modes of the unweighted conditional posterior at `θ̂`, and `get_loglikelihood` evaluates `Σ_i w_i v_i ln p(y_i | η̂, θ̂)` at these modes.
+- `MCMC` and `compute_uq(...; method = :mcmc_refit)`: not supported, an `ArgumentError` is thrown.
+- `get_loglikelihood`, `complete_data_loglikelihood` and the method-developer functions (`conditional_loglikelihood`, `laplace_marginal`, ...) return values with `v_i` applied, so the reported log-likelihood is a weighted pseudo log-likelihood `Σ_i w_i v_i ln p(y_i | η̂, θ̂)` for the conditional methods. `sample_random_effect_draws` and `mcem_e_step` draw from the unweighted conditional distribution, as the SAEM/MCEM E-step does.
+- Post-fit draws of the random effects (`sample_random_effects`, the `:conditional` mode of `fit_cv`) ignore `likelihood_weights` for every method. For `Laplace`, `FOCEI` and `GHQuadrature` they come from the Laplace approximation of the unweighted conditional posterior at `θ̂` (its mode is recomputed); for `VEM` the same Laplace approximation is used, since the fitted `q` approximates the weighted integrand; `SAEM`/`MCEM` use their unweighted E-step sampler.
+- `compute_uq(res; method = :wald)` defaults to the sandwich covariance, as for `weights`, with batch scores `g_b` of the `v_i`-weighted batch log-likelihood. `vcov = :hessian` and `method = :profile` throw an `ArgumentError`, so with `likelihood_weights` the sandwich Wald covariance is the only UQ backend.
+- `fit_cv` weights each held-out individual's scores by `w_b v_i` in the fold totals (`weighted = true`); the per-row scores stay unweighted.
+- Simulation (`simulate_data`, VPCs, predictive draws) ignores `likelihood_weights`: for given `θ` and `η` the simulated data are the same with and without the column.
 
 ## DataModel Summary
 

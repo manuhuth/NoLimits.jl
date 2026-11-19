@@ -221,7 +221,7 @@ Supported methods: `MLE`, `MAP`, `Laplace`, `FOCEI`, `GHQuadrature`, `VEM`, `SAE
   methods). Both draw new random effects only for the selected batches.
   - `:incremental` (incremental EM, Neal & Hinton 1998): the other batches keep their draws
     from their last visit, and the M-step uses all batches.
-  - `:scaled`: the M-step uses only the selected batches, with their likelihood weights
+  - `:scaled`: the M-step uses only the selected batches, with their batch weights
     multiplied by `nbatches / length(selected)` (an unbiased estimate of the full-data
     Q-function). For `SAEM` it requires `mstep_sa_on_params = true` and no custom
     `suffstats`. The reported objective is then the scaled Q of the last minibatch.
@@ -346,7 +346,7 @@ function _fit_model(dm::DataModel, mb::MiniBatch, args...; kwargs...)
     return _fit_model(dm, m, args...; kwargs...)
 end
 
-# Scaled-subset EM: the schedule callable writes the likelihood weights of a private
+# Scaled-subset EM: the schedule callable writes the batch weights of a private
 # DataModel copy (nbatches / |B| times the base weight in the selected batches, 0
 # elsewhere), so the weighted Q-function and closed-form statistics of the M-step are the
 # scaled subset estimate. Zero-weight batches are skipped in the Q evaluations.

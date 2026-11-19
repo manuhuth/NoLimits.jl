@@ -395,6 +395,10 @@ ok      = get_converged(res)
 re_df   = get_random_effects(res)
 ```
 
+## Likelihood Weights
+
+With `DataModel(...; likelihood_weights = :v)` the E-step draws, the importance weights of `MCEM_IS` and the final empirical Bayes modes ignore the weights; each individual's conditional log-likelihood in the Q-function and the closed-form outcome statistics are multiplied by its weight. This is a weighted complete-data EM, which differs from the weighted marginal likelihood that `Laplace`, `FOCEI` and `GHQuadrature` maximize (see [Conditional-Likelihood Weights](../data-model-construction.md#Conditional-Likelihood-Weights)).
+
 ## Where to go next
 
 - [Choosing a method](index.md#Choosing-a-Method) - how this compares with the alternatives.
