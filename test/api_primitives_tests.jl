@@ -1691,6 +1691,46 @@ end
         @test all(isapprox.(stored, modes(dm0); rtol = 1.0e-5, atol = 1.0e-7))
         @test !all(isapprox.(stored, modes(dmr); rtol = 1.0e-5, atol = 1.0e-7))
     end
+    # Louis information (#441) at fixed θ and fixed draws vs per-draw ForwardDiff oracles:
+    # A = Σ_b (-E[∇²ℓ_w] - Cov(∇ℓ_w, ∇ℓ_u)), B = Σ_b E[∇ℓ_w]E[∇ℓ_w]ᵀ.
+    function louis_AB(d)
+        fe = NoLimits.get_fixed(model)
+        θt = NoLimits.get_transform(fe)(θ)
+        _, bis, cc = NoLimits.build_re_batch_infos(d, NamedTuple())
+        lmap = NoLimits._LouisThetaMap(getaxes(θt), θt, getaxes(θt), collect(propertynames(θt)), NoLimits.get_inverse_transform(fe))
+        x = collect(θt)
+        st = NoLimits._louis_init(d, bis, lmap, cc, x; ode_args = (), ode_kwargs = NamedTuple(), serialization = ser)
+        NoLimits._louis_average!(st, d, bis, x, bi -> eachcol(NoLimits.get_draws(draws0[bi])), _ -> nothing, ser)
+        return NoLimits._louis_matrices(st.S, st.Δw, st.Δu, d, bis)
+    end
+    function louis_oracle(d)
+        fe = NoLimits.get_fixed(model)
+        θt = NoLimits.get_transform(fe)(θ)
+        θu(x) = NoLimits.get_inverse_transform(fe)(ComponentArray(x, getaxes(θt)))
+        _, bis, cc = NoLimits.build_re_batch_infos(d, NamedTuple())
+        ds, x, p = NoLimits._sampling_dm(d), collect(θt), length(θt)
+        A, B = zeros(p, p), zeros(p, p)
+        for (bi, info) in enumerate(bis)
+            D = NoLimits.get_draws(draws0[bi])
+            lw(b) = x -> complete_data_loglikelihood(d, info, θu(x), b; const_cache = cc)
+            lu(b) = x -> complete_data_loglikelihood(ds, info, θu(x), b; const_cache = cc)
+            gw = [ForwardDiff.gradient(lw(D[:, s]), x) for s in axes(D, 2)]
+            gu = [ForwardDiff.gradient(lu(D[:, s]), x) for s in axes(D, 2)]
+            Hw = [ForwardDiff.hessian(lw(D[:, s]), x) for s in axes(D, 2)]
+            Δw, Δu = sum(gw) / length(gw), sum(gu) / length(gu)
+            cov_wu = sum(gw[s] * gu[s]' for s in eachindex(gw)) / length(gw) - Δw * Δu'
+            A .+= -sum(Hw) / length(Hw) .- cov_wu
+            B .+= Δw * Δw'
+        end
+        return A, B
+    end
+    for d in (dm0, dmr)
+        (A, B), (A0, B0) = louis_AB(d), louis_oracle(d)
+        @test A ≈ A0 rtol = 1.0e-10
+        @test B ≈ B0 rtol = 1.0e-10
+    end
+    @test !(louis_AB(dmr)[1] ≈ louis_AB(dmr)[1]')   # the weighted A is not symmetric
+    @test louis_AB(dm1)[1] ≈ louis_AB(dm0)[1] rtol = 1.0e-14   # v ≡ 1: plain Louis
     # Post-fit draws of a Laplace fit come from the unweighted conditional posterior at θ̂.
     # (a weighted fit stores the modes of its weighted integrand; its draws equal those of an
     # unweighted fit at the same θ, whose stored modes are the unweighted ones)
