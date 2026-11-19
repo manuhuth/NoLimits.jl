@@ -13,7 +13,7 @@
 
 using PrecompileTools: @compile_workload, @setup_workload
 
-function _pc_erased_optf(adtype)
+function _pc_erased_optf(adtype; hess_prototype = nothing)
     return OptimizationFunction(
         _ErasedObjective((x, p) -> sum(abs2, x .- 0.5)), adtype;
         grad = _ErasedGradient((G, x, p) -> (G .= 2 .* (x .- 0.5); nothing)),
@@ -22,7 +22,8 @@ function _pc_erased_optf(adtype)
                 G .= 2 .* (x .- 0.5)
                 return sum(abs2, x .- 0.5)
             end
-        )
+        ),
+        hess_prototype
     )
 end
 
@@ -65,10 +66,11 @@ function _precompile_workload(; strict::Bool = false)
             _pc_outer_solve(optf, m.optimizer, m.optim_kwargs, true, false)
         end
     end
-    # VEM: its own default LBFGS and keywords; main solve and `remake`d refinement solve.
+    # VEM: its own default LBFGS and keywords and its Hessian prototype; main solve and
+    # `remake`d refinement solve.
     _pc_try(strict) do
         m = VEM()
-        optf = _pc_erased_optf(m.adtype)
+        optf = _pc_erased_optf(m.adtype; hess_prototype = _vem_hess_prototype(m.optimizer))
         _pc_outer_solve(optf, m.optimizer, m.optim_kwargs, false, true)
         _pc_outer_solve(optf, m.optimizer, m.optim_kwargs, true, true)
     end

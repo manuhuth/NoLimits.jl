@@ -959,6 +959,10 @@ function _vem_check_optimizer(opt)
     )
 end
 
+# OptimizationOptimJL allocates a dense n×n Hessian for unbounded Optim solves unless the
+# OptimizationFunction has a prototype; n ≈ N·2d + p here. Hessian-free rules never touch it.
+_vem_hess_prototype(opt) = SciMLBase.requireshessian(opt) ? nothing : Matrix{Float64}(undef, 0, 0)
+
 _sol_iterations(sol) = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?
     sol.stats.iterations : missing
 
@@ -1356,16 +1360,17 @@ function _fit_model(
     y0 = copy(x0)
     y0[1:p] .= 0.0
     fy(y, _) = fgy!(0.0, nothing, y)
-    # `fg` makes Optim's line search and Optimisers rules use the fused value + gradient
-    optf = OptimizationFunction(
-        _ErasedObjective(fy), method.adtype;
-        grad = _ErasedGradient((G, y, _) -> (fgy!(nothing, G, y); nothing)),
-        fg = _ErasedValueGradient((G, y, _) -> fgy!(0.0, G, y))
-    )
     # bounds act on the fixed effects only, mapped into y; κ stays unbounded
     lb_y = vcat((lb .- x0[1:p]) ./ s, fill(-Inf, off - p))
     ub_y = vcat((ub .- x0[1:p]) ./ s, fill(Inf, off - p))
     opt_use, use_bounds_y = _bounded_optimizer(method.optimizer, use_bounds, lb_y, ub_y)
+    # `fg` makes Optim's line search and Optimisers rules use the fused value + gradient
+    optf = OptimizationFunction(
+        _ErasedObjective(fy), method.adtype;
+        grad = _ErasedGradient((G, y, _) -> (fgy!(nothing, G, y); nothing)),
+        fg = _ErasedValueGradient((G, y, _) -> fgy!(0.0, G, y)),
+        hess_prototype = _vem_hess_prototype(opt_use)
+    )
     prob = use_bounds_y ? OptimizationProblem(optf, y0; lb = lb_y, ub = ub_y) :
         OptimizationProblem(optf, y0)
     t0 = time()
@@ -1449,12 +1454,14 @@ function _fit_model(
             return F === nothing ? nothing : v
         end
         xθ0 = Vector{Float64}(x̂[1:p])
+        ropt, rbounds = _bounded_optimizer(method.optimizer, use_bounds, lb, ub)
+        # p×p only; the prototype keeps one OptimizationFunction type for both solves
         rf = OptimizationFunction(
             _ErasedObjective((xθ, _) -> fr(xθ)), method.adtype;
             grad = _ErasedGradient((G, xθ, _) -> (fgr!(nothing, G, xθ); nothing)),
-            fg = _ErasedValueGradient((G, xθ, _) -> fgr!(0.0, G, xθ))
+            fg = _ErasedValueGradient((G, xθ, _) -> fgr!(0.0, G, xθ)),
+            hess_prototype = _vem_hess_prototype(ropt)
         )
-        ropt, rbounds = _bounded_optimizer(method.optimizer, use_bounds, lb, ub)
         rprob = rbounds ? OptimizationProblem(rf, xθ0; lb = lb, ub = ub) :
             OptimizationProblem(rf, xθ0)
         # damped Newton finish (p ≤ 50), which also decides convergence: L-BFGS in these
