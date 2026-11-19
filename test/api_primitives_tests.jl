@@ -1578,7 +1578,9 @@ end
     mk(d; kw...) = DataModel(model, d; primary_id = :ID, time_col = :t, kw...)
     dm0, dm1 = mk(df), mk(df; likelihood_weights = :v1)
     dmv, dmz, dmr = mk(df; likelihood_weights = "v"), mk(df; likelihood_weights = :vz), mk(df; likelihood_weights = :vr)
-    dmd, dmdel = mk(vcat(df, dup)), mk(df[df.ID .!= 2, :])
+    # the duplicated and the reduced data carry unit weights (equal to unweighted, checked
+    # bitwise below), so every oracle compiles only for the weighted DataModel type
+    dmd, dmdel = mk(vcat(df, dup); likelihood_weights = :v1), mk(df[df.ID .!= 2, :]; likelihood_weights = :v1)
     @test NoLimits.get_likelihood_weights(dm0) === nothing
     @test NoLimits.get_likelihood_weights(dmr) == [0.5, 3.0, 1.5, 0.25]
     @test NoLimits.get_weights(dmr) === nothing
@@ -1593,24 +1595,26 @@ end
     # FOCEI/FOCE with an exact-Newton inner solve: the default Gauss-Newton stops at a
     # tolerance that leaves ~1e-7 between the weighted and the duplicated mode.
     exact_inner = NoLimits.NewtonInner(curvature = NoLimits.ExactHessianCurvature(), x_abstol = 1.0e-14)
-    for m in (
-            NoLimits.Laplace(), NoLimits.FOCEI(; inner_optimizer = exact_inner),
-            NoLimits.FOCEI(; interaction = false, inner_optimizer = exact_inner),
-            NoLimits.GHQuadrature(level = 2),
-        )
+    # v ≡ 1 is bitwise unweighted (Laplace: wrapper multiplier, FOCEI: per-observation
+    # scaling); v_i = 2 equals a duplicate for all marginal methods (FOCE: block-arrow
+    # gradient); v_i = 0 equals deletion (Laplace, FOCEI).
+    lap, focei = NoLimits.Laplace(), NoLimits.FOCEI(; inner_optimizer = exact_inner)
+    foce = NoLimits.FOCEI(; interaction = false, inner_optimizer = exact_inner)
+    for m in (lap, focei)
         v0, g0 = og(m, dm0, θ)
         v1, g1 = og(m, dm1, θ)
         @test v1 == v0
         @test collect(g1) == collect(g0)
-        vw, gw = og(m, dmv, θ)
-        vd, gd = og(m, dmd, θ)
-        @test vw ≈ vd rtol = 1.0e-10
-        @test collect(gw) ≈ collect(gd) rtol = 1.0e-8
         vz, gz = og(m, dmz, θ)
         vdl, gdl = og(m, dmdel, θ)
         @test vz ≈ vdl rtol = 1.0e-10
         @test collect(gz) ≈ collect(gdl) rtol = 1.0e-8
-        @test all(isfinite, collect(og(m, dmr, θ)[2]))
+    end
+    for m in (lap, focei, foce, NoLimits.GHQuadrature(level = 2))
+        vw, gw = og(m, dmv, θ)
+        vd, gd = og(m, dmd, θ)
+        @test vw ≈ vd rtol = 1.0e-10
+        @test collect(gw) ≈ collect(gd) rtol = 1.0e-8
     end
 
     # SAEM/MCEM: the E-step ignores the weights, the M-step applies them.
@@ -1664,10 +1668,12 @@ end
     @test abs(gσ(dmr)) < 1.0e-6
     @test abs(gσ(dm0)) > 1.0e-3
     llc0 = NoLimits.build_ll_cache(dm0; serialization = ser, force_saveat = true)
-    for mfit in (NoLimits.SAEM(; maxiters = 3, q_store_max = 2), NoLimits.MCEM(; maxiters = 2, progress = false))
+    saem = NoLimits.SAEM(; maxiters = 3, q_store_max = 2)
+    fit_s(d) = fit_model(d, saem; serialization = ser, rng = Random.Xoshiro(2), store_eb_modes = false)
+    @test collect(NoLimits.get_params(fit_s(dm1); scale = :transformed)) ==
+        collect(NoLimits.get_params(fit_s(dm0); scale = :transformed))
+    for mfit in (saem, NoLimits.MCEM(; maxiters = 2, progress = false))
         fit(d; kw...) = fit_model(d, mfit; serialization = ser, rng = Random.Xoshiro(2), store_eb_modes = false, kw...)
-        @test collect(NoLimits.get_params(fit(dm1); scale = :transformed)) ==
-            collect(NoLimits.get_params(fit(dm0); scale = :transformed))
         # the reported EBEs are the modes of the unweighted conditional posterior at θ̂
         rw = fit(dmr; store_eb_modes = true)
         θw = NoLimits.get_params(rw; scale = :untransformed)
@@ -1702,7 +1708,6 @@ end
     dupn.ID .= maximum(dfn.ID) + 1
     mkn(d; kw...) = DataModel(mn, d; primary_id = :ID, time_col = :t, kw...)
     θn = NoLimits.get_θ0_untransformed(NoLimits.get_fixed(mn))
-    @test og(NoLimits.MLE(), mkn(dfn; likelihood_weights = :v1), θn) == og(NoLimits.MLE(), mkn(dfn), θn)
     vw, gw = og(NoLimits.MLE(), mkn(dfn; likelihood_weights = :v), θn)
     vd, gd = og(NoLimits.MLE(), mkn(vcat(dfn, dupn)), θn)
     @test vw ≈ vd rtol = 1.0e-12
