@@ -66,6 +66,9 @@ Four backends are supported:
 - `re_approx::Symbol = :auto`: random-effects approximation of the Wald Hessian for `MCEM`/`SAEM`
   (and custom `:wald_re`) fits: `:auto` selects `FOCEI`, or `Laplace` when an outcome
   distribution has no closed-form Fisher information; `:focei` or `:laplace` select one.
+  An `MCEM`/`SAEM` fit that stores its Louis information (the default) uses
+  that information instead, unless `re_approx`, `re_approx_method`, `constants` or
+  `constants_re` is passed; the diagnostics then report `approximation_method = :louis`.
 - `re_approx_method`: a `Laplace` or `FOCEI` instance used for the RE approximation, or `nothing`.
 - `level::Real = 0.95`: nominal coverage level for the intervals.
 - `pseudo_inverse::Bool = false`: use the Moore-Penrose pseudo-inverse for singular

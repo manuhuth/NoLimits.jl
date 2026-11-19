@@ -298,6 +298,23 @@ marginal likelihood that `Laplace`/`FOCEI`/`GHQuadrature` maximize.
   `false` to optimize the transformed vector directly, which reproduces pre-0.2 results
   bit-for-bit. Note that with preconditioning on, the optimizer object behind
   [`get_raw`](@ref) works in `z`; [`get_params`](@ref) always returns the usual scales.
+- `louis = :online`: observed Fisher information for Wald UQ, estimated with Louis' identity
+  (Louis 1982) from posterior draws of the random effects and stored in the fit result.
+  `compute_uq(res; method = :wald)` then uses it in place of the FOCEI/Laplace marginal
+  Hessian (diagnostic `approximation_method = :louis`); an explicit `re_approx`,
+  `re_approx_method`, `constants` or `constants_re` in `compute_uq` selects the marginal
+  Hessian again. Values:
+  - `:online` (default): the draws of the final E-step. They target the posterior at the
+    previous iterate, and self-normalized importance weights move them to the estimate
+    (`MCEM_IS` draws keep their importance weights in both the mean and the covariance).
+    With the default 25 draws per batch the information is noisy when the random effects
+    are strongly shrunk.
+  - `:posterior`: `louis_draws` fresh draws per batch at the estimate, continuing copies of
+    the final chains with forked per-batch random-number generators.
+  - `false`: no Louis information; Wald UQ uses the marginal Hessian.
+  Louis draws no random numbers from the fit's streams, so the estimates are bitwise
+  identical for every value. No information is stored under `MiniBatch`.
+- `louis_draws::Int = 500`: draws per batch for `louis = :posterior`.
 """
 struct MCEM{O, K, A, ES, EO, EB, ER, L, U, US, RV, RC, RM} <: FittingMethod
     optimizer::O
@@ -319,6 +336,8 @@ struct MCEM{O, K, A, ES, EO, EB, ER, L, U, US, RV, RC, RM} <: FittingMethod
     resid_var_param::RV
     re_cov_params::RC
     re_mean_params::RM
+    louis::Symbol
+    louis_draws::Int
 end
 
 function MCEM(;
@@ -361,8 +380,11 @@ function MCEM(;
         builtin_stats = :auto,
         resid_var_param = :σ,
         re_cov_params = NamedTuple(),
-        re_mean_params = NamedTuple()
+        re_mean_params = NamedTuple(),
+        louis::Union{Bool, Symbol} = :online,
+        louis_draws::Int = 500
     )
+    louis = _louis_mode("MCEM", louis, louis_draws)
     diagnostics_every >= 1 ||
         error("MCEM: diagnostics_every must be ≥ 1. Got: $diagnostics_every")
     convergence_window >= 4 ||
@@ -395,7 +417,7 @@ function MCEM(;
         optimizer, _as_namedtuple(optim_kwargs), _normalize_adtype(adtype), e_step_actual, em, ebe, ebe_rescue,
         lb, ub, :all, verbose, progress, store_diagnostics,
         diagnostics_every, precondition, _as_symbol(builtin_stats), resid_var_param,
-        re_cov_params, re_mean_params
+        re_cov_params, re_mean_params, louis, louis_draws
     )
 end
 
@@ -1845,6 +1867,7 @@ function _fit_model(
     ess_by_batch = fill(NaN, length(batch_infos))
 
     mstep_curv = _SAEMMStepCurvature()   # carried M-step curvature (see the Q1 M-step)
+    θu_draws = nothing   # θ the final E-step draws target (Louis)
     for iter in 1:(method.em.maxiters)
         mstep_skipped = false
         θt_curr = θ_prev isa ComponentArray ? θ_prev : ComponentArray(θ_prev, axs_free)
@@ -1854,6 +1877,7 @@ function _fit_model(
             setproperty!(θt_full_curr, name, getproperty(θt_curr, name))
         end
         θu_curr = inv_transform(θt_full_curr)
+        θu_draws = θu_curr
 
         use_mcmc = _use_mcmc_this_iter(iter, method.e_step)
         ramp_full = true          # set by the IS branch when the sample size is ramped
@@ -2311,6 +2335,40 @@ function _fit_model(
             mcmc_candidates_by_batch = last_b_candidates
         )[1] : nothing
 
+    louis_status = method.louis === :off ? :off :
+        method.update_schedule !== :all ? :minibatch :
+        θu_draws === nothing ? :too_few_iterations : :ok
+    louis_note = if louis_status !== :ok
+        _louis_note(louis_status)
+    else
+        louis_st = _louis_init(
+            dm, batch_infos,
+            _LouisThetaMap(axs_free, θ_const_t, axs_full, free_names, inv_transform),
+            const_cache, Vector{Float64}(collect(θ_hat_t[free_names]));
+            ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization
+        )
+        smp_l, ws_l = if method.louis === :posterior
+            _mcem_louis_draws(
+                dm_s, batch_infos, θ_hat_u, const_cache,
+                louis_st.cache isa Vector ? louis_st.cache[1] : louis_st.cache,
+                method.e_step, prev_use_mcmc === true, batch_rngs, re_names, re_types,
+                last_params, proposal_blocks, method.louis_draws, length(diag.Q_hist) + 1
+            )
+        else
+            samples_by_batch, _louis_reweight(
+                    dm_s, batch_infos, θu_draws, θ_hat_u, samples_by_batch,
+                    prev_use_mcmc === true ? nothing : weights_store,
+                    const_cache, louis_st.cache, serialization
+                )
+        end
+        _louis_average!(
+            louis_st, dm, batch_infos, Vector{Float64}(collect(θ_hat_t[free_names])),
+            bi -> eachcol(smp_l[bi]), bi -> ws_l === nothing ? nothing : ws_l[bi],
+            serialization
+        )
+        _louis_finish(louis_st, dm, batch_infos, _flat_names_for_free(fe, free_names))
+    end
+
     mstep_mode = closed_form_used ? (numeric_mstep_used ? :hybrid : :closed_form_only) :
         :numeric_only
     notes = (
@@ -2324,6 +2382,7 @@ function _fit_model(
         numeric_targets = numeric_targets,
         # stride of `diagnostics.θ_hist` (kept so reloaded fits can plot EM trajectories)
         diagnostics_every = method.diagnostics_every,
+        louis = louis_note,
     )
 
     result = MCEMResult(nothing, Q_prev, length(diag.Q_hist), nothing, notes, eb_modes)
