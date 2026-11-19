@@ -2046,6 +2046,8 @@ get_weights(dm::DataModel) = dm.weights
 # Weight of individual `i` / of a batch of individuals (batches carry one weight).
 @inline _ind_weight(dm::DataModel, i::Integer) = dm.weights === nothing ? 1.0 : dm.weights[i]
 @inline _batch_weight(dm::DataModel, inds) = dm.weights === nothing ? 1.0 : dm.weights[first(inds)]
+# Single predicate for "this DataModel carries `weights` or `likelihood_weights`" (UQ guards, #437).
+@inline _has_likelihood_weights(dm::DataModel) = !_no_weights(dm)
 
 """
     get_likelihood_weights(dm::DataModel) -> Union{Nothing, Vector{Float64}}

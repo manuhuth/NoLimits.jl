@@ -56,8 +56,13 @@ Four backends are supported:
   so the aliases select the backend's interval rather than a variant of it, and a
   cross-backend alias (e.g. `method=:wald, interval=:equaltail`) is an error.
 - `vcov::Symbol = :auto`: covariance source for Wald UQ (`:hessian` or `:sandwich`).
-  `:auto` uses `:sandwich` when the `DataModel` has `weights` or `likelihood_weights` (the inverse
-  Hessian of a weighted objective is not a valid covariance) and `:hessian` otherwise.
+  `:auto` uses `:sandwich` when the `DataModel` has `weights` or `likelihood_weights` and
+  `:hessian` otherwise.
+  With either kind of weights the inverse Hessian of the weighted objective is not a valid
+  covariance, so `vcov = :hessian` and `method = :profile` (also reached through
+  `interval = :profile`) throw an `ArgumentError`. Valid options there are `method = :wald`
+  with `vcov = :sandwich` (or `:auto`) and, for batch `weights` only, `method = :mcmc_refit`
+  and `method = :chain` for MCMC/VI fits (MCMC rejects `likelihood_weights`).
 - `re_approx::Symbol = :auto`: random-effects approximation of the Wald Hessian for `MCEM`/`SAEM`
   (and custom `:wald_re`) fits: `:auto` selects `FOCEI`, or `Laplace` when an outcome
   distribution has no closed-form Fisher information; `:focei` or `:laplace` select one.
@@ -160,14 +165,17 @@ function compute_uq(
     end
     _validate_uq_interval(backend, interval)
 
+    # Checked on the resolved backend, before any Hessian is formed (#437).
+    dm_w = get_data_model(res)
+    weighted = dm_w !== nothing && _has_likelihood_weights(dm_w)
+    if weighted
+        backend == :profile && throw(_weighted_uq_error("method = :profile"))
+        backend == :wald && vcov == :hessian &&
+            throw(_weighted_uq_error("vcov = :hessian"))
+    end
+
     if backend == :wald
-        if vcov == :auto
-            dm_w = get_data_model(res)
-            vcov = (
-                    dm_w !== nothing &&
-                    (get_weights(dm_w) !== nothing || get_likelihood_weights(dm_w) !== nothing)
-                ) ? :sandwich : :hessian
-        end
+        vcov == :auto && (vcov = weighted ? :sandwich : :hessian)
         vcov in (:hessian, :sandwich) ||
             error("For Wald UQ, vcov must be :hessian or :sandwich.")
         # every :wald_re Hessian except GHQuadrature's is a Laplace/FOCEI one

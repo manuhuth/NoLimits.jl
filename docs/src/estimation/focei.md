@@ -101,10 +101,12 @@ dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 res = fit_model(dm, NoLimits.FOCEI())
 ```
 
-To estimate without the interaction term (FOCE), pass `interaction=false`:
+To estimate without the interaction term (FOCE), use `FOCE()`, an alias for
+`FOCEI(; interaction=false)`. It accepts the same keywords as `FOCEI` except `interaction`:
 
 ```julia
-res_foce = fit_model(dm, NoLimits.FOCEI(; interaction=false))
+res_foce = fit_model(dm, NoLimits.FOCE())
+# equivalent: fit_model(dm, NoLimits.FOCEI(; interaction=false))
 ```
 
 ## Constructor Options
