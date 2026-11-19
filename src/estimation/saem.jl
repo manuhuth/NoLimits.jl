@@ -607,7 +607,8 @@ that `Laplace`/`FOCEI`/`GHQuadrature` maximize.
     approximation of the information of Kuhn and Lavielle (2005). θ is frozen at the
     estimate, copies of the last chains continue with forked per-batch random-number
     generators (no new burn-in), and the Louis integrand of every iteration enters an
-    equal-weight average. This resembles nlmixr2's `covMethod = "sa"` without claiming
+    equal-weight average. A Turing-based `sampler` is replaced by `SaemixMH` there, started
+    from the last draws, since a Turing `sample` call per batch and iteration is slow. This resembles nlmixr2's `covMethod = "sa"` without claiming
     identical numerics. The phase is decoupled from the cooling schedule: averaging with
     the step sizes γ_k of the parameter updates would leave an effective sample size of
     about 2 to 16 iterations under the default schedule, too few for the score
