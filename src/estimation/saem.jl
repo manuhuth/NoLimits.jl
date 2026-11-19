@@ -2495,7 +2495,7 @@ function _saem_push_outcome_stat(prev, dist, y, T::Type)
     )
 end
 
-# Likelihood weights scale an individual's sufficient statistics and its count: the batch
+# Batch and likelihood weights scale an individual's sufficient statistics and its count: the batch
 # weight times the individual's conditional-likelihood weight (RE statistics carry only the
 # batch weight).
 function _saem_weight_outcome_stat(st, dm::DataModel, i::Int)
@@ -2692,7 +2692,7 @@ function _saem_builtin_collect_current_stats(
             re_pairs,
             re => (
                 family = family, mean = mean_x, second = second_x,
-                # Summed weight under likelihood weights, so `mean * n` stays additive.
+                # Summed weight under batch weights, so `mean * n` stays additive.
                 n = get_weights(dm) === nothing ? nvals : wsum,
                 known_mean = known_mean,
             )

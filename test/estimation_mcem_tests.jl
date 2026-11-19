@@ -1027,7 +1027,7 @@ end
     end
 end
 
-@testset "likelihood weights: MCEM/SAEM Q and closed-form M-step" begin
+@testset "batch weights: MCEM/SAEM Q and closed-form M-step" begin
     ser = NoLimits.EnsembleSerial()
     model = fx_re_model()
     df = copy(fx_re_df())
@@ -1116,7 +1116,7 @@ end
 end
 
 @testset "SAEM/MCEM M-step objectives: EnsembleThreads == EnsembleSerial" begin
-    # ODE model, 8 batches with likelihood weights. The threaded objectives sum per-batch
+    # ODE model, 8 batches with batch weights. The threaded objectives sum per-batch
     # parts in batch order, so they must be bitwise equal to the serial path, also under
     # ForwardDiff (value and gradient), and must return Inf on a non-finite batch.
     FD = NoLimits.ForwardDiff

@@ -21,7 +21,7 @@ effects (e.g. neural networks) and many random effects.
 ## Applicability
 
 - Requires a model with random effects and at least one free fixed effect.
-- `penalty`, `extra_objective` and likelihood weights of the `DataModel` are supported (see
+- `penalty`, `extra_objective` and the batch and likelihood weights of the `DataModel` are supported (see
   [Penalties and Weights](#Penalties-and-Weights));
   fixed-effect priors are ignored.
 - Any continuous random-effect distribution is supported with the default `adtype`
@@ -126,7 +126,7 @@ res = fit_model(
 )
 ```
 
-Likelihood weights of the `DataModel` (`DataModel(...; weights = :w)`) multiply the ELBO
+Batch weights of the `DataModel` (`DataModel(...; weights = :w)`) multiply the ELBO
 term of each random-effect batch, and its marginal-likelihood term in the `refine` step and
 in the reported objective, so a weight of 2 is equivalent to a duplicated individual. The
 optimal variational distribution of a batch does not depend on its weight. Random-effect

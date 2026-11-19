@@ -1418,7 +1418,7 @@ end
     end
 end
 
-@testset "likelihood weights: marginal objectives, fits, UQ, CV" begin
+@testset "batch weights: marginal objectives, fits, UQ, CV" begin
     ser = NoLimits.EnsembleSerial()
     og = NoLimits.objective_and_gradient
     model = fx_re_model()

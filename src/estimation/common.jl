@@ -3288,7 +3288,7 @@ function _cdll_terms(
             push!(seen, (ri, li))
             v += logpdf(level_dist[ri][li], getval(ri, li))
         end
-        # Likelihood weights as in `loglikelihood` (weight 0 is removal).
+        # Batch weights as in `loglikelihood` (weight 0 is removal).
         w = _ind_weight(dm, i)
         vals[k] = iszero(w) ? zero(T) : w * v
     end
@@ -3304,7 +3304,7 @@ end
 Joint (complete-data) log-density `ln p(y, η | θ)` for a random-effects model: the
 per-individual observation log-likelihood plus the random-effect prior summed once per
 grouping level. With no random effects it reduces to the population log-likelihood.
-With likelihood weights (`DataModel(...; weights)`) each individual's term, including the
+With batch weights (`DataModel(...; weights)`) each individual's term, including the
 random-effect prior it carries, is multiplied by its weight, so an integer weight `k`
 equals `k` copies of the individual.
 
@@ -3336,7 +3336,7 @@ Per-individual breakdown of [`complete_data_loglikelihood`](@ref) (same argument
 `DataFrame` with the `primary_id` column and a `:complete_data_loglikelihood` column
 giving, for each selected individual, its observation log-likelihood plus the
 random-effect prior of any grouping level it is the first to contribute, multiplied by
-the individual's likelihood weight. The values sum
+the individual's batch weight. The values sum
 to `complete_data_loglikelihood` called with the same arguments. Useful for inspecting
 per-subject fit before running an estimation.
 """

@@ -49,7 +49,7 @@ algorithm, save-time mode, and the integration start time.
 - `serialization::S`: SciML ensemble algorithm (e.g. `EnsembleSerial()`, `EnsembleThreads()`).
 - `saveat_mode::Symbol`: `:dense` or `:saveat` (resolved from `:auto` at construction time).
 - `t0::T`: integration start time, or `nothing` to start at each individual's first data time.
-- `weights_col::Union{Nothing, Symbol}`: per-individual likelihood weight column, or `nothing`.
+- `weights_col::Union{Nothing, Symbol}`: batch weight column (`weights`), or `nothing`.
 """
 struct DataModelConfig{S, T}
     primary_id::Symbol
@@ -190,7 +190,7 @@ struct DataModel{M, D, I, P, C, K, G, R, W}
     id_index::K
     row_groups::G
     re_group_info::R
-    # Per-individual likelihood weights, or `nothing` (unweighted).
+    # Per-individual batch weights (`weights`), or `nothing` (unweighted).
     weights::Union{Nothing, Vector{Float64}}
     # Per-individual conditional-likelihood weights (`_LikWeights`), or `nothing`. A type
     # parameter so the unweighted likelihood compiles to the unweighted code.
@@ -2038,7 +2038,7 @@ get_re_group_info(dm::DataModel) = dm.re_group_info
 """
     get_weights(dm::DataModel) -> Union{Nothing, Vector{Float64}}
 
-Return the per-individual likelihood weights (in individual order), or `nothing` when
+Return the per-individual batch weights (in individual order), or `nothing` when
 the `DataModel` was built without a `weights` column.
 """
 get_weights(dm::DataModel) = dm.weights

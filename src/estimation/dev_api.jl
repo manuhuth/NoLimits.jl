@@ -1641,7 +1641,7 @@ Federated aggregation: `outcome`/`hmm` fields are plain sums (add directly acros
 then re-dividing by the pooled `n`. The `idx` form returns batch `idx`'s contribution; summed
 this way over batches it equals the population form (the per-subject seam for DP / federation).
 Draws are treated as equally-weighted MCMC draws, matching the SAEM MH sampler.
-With likelihood weights ([`get_weights`](@ref)) every contribution is multiplied by its
+With batch weights ([`get_weights`](@ref)) every contribution is multiplied by its
 batch weight and `n` is the summed weight, so the aggregation rule above is unchanged.
 """
 function saem_sufficient_statistics(

@@ -24,7 +24,7 @@ The key constructor arguments are:
 - `evid_col` (default `nothing`): enables event-table parsing for ODE models (see below).
 - `amt_col` (default `:AMT`), `rate_col` (default `:RATE`), `cmt_col` (default `:CMT`): event-related columns, used when `evid_col` is set.
 - `serialization` (default `EnsembleSerial()`): controls parallel execution mode; use `EnsembleThreads()` for multi-threaded evaluation.
-- `weights` (default `nothing`): a column of per-individual likelihood weights, see [Likelihood Weights](#Likelihood-Weights).
+- `weights` (default `nothing`): a column of per-individual batch weights, see [Batch Weights](#Batch-Weights).
 - `likelihood_weights` (default `nothing`): a column of per-individual conditional-likelihood weights that may differ within a batch, see [Conditional-Likelihood Weights](#Conditional-Likelihood-Weights).
 
 The examples below always pass these explicitly, but if you omit them the defaults above apply (so a dataset whose time column is named `TIME` and whose event columns are named `AMT`/`RATE`/`CMT` needs no overrides).
@@ -246,10 +246,10 @@ ensures coarsed-state likelihoods are used only when explicitly requested.
 - **Constant covariate consistency**: constant covariates must be constant within `primary_id` and within all declared `constant_on` groups.
 - **Random-effect covariate dependencies**: random-effect distributions that use covariates require those covariates to be `ConstantCovariate` or `ConstantCovariateVector`.
 - **Formula time offsets**: constant time offsets in formulas (e.g., `x1(t - 0.5)`) extend the integration window automatically. Offsets that push evaluation before `t = 0` are rejected. Non-constant offsets require `saveat_mode = :dense`.
-- **Likelihood weights**: a `weights` column must be numeric, finite, nonnegative, constant within each individual, contain a positive value, and be equal within each batch of individuals that share random-effect levels. A `likelihood_weights` column has the same requirements except the equality within a batch.
+- **Batch and likelihood weights**: a `weights` column must be numeric, finite, nonnegative, constant within each individual, contain a positive value, and be equal within each batch of individuals that share random-effect levels. A `likelihood_weights` column has the same requirements except the equality within a batch.
 - **PreDE random-effect constraint**: random effects used in `@preDifferentialEquation` must be constant within each `primary_id` group. Grouping by `primary_id` or by a coarser level (e.g. a site column that never changes within an individual) is allowed. A grouping column that varies within an individual is rejected.
 
-## Likelihood Weights
+## Batch Weights
 
 `DataModel(model, df; weights = :w)` attaches a weight `w_i` to each individual. Every estimator then maximizes the weighted objective
 
@@ -271,7 +271,7 @@ How the methods use the weights:
 - `compute_uq(res; method = :wald)` uses the sandwich covariance `H^{-1} B H^{-1}` with `B = \sum_b w_b^2 g_b g_b^T` when the data model is weighted (`vcov = :auto` selects it). The inverse Hessian of a weighted objective is not a covariance estimate, so `vcov = :hessian` and `method = :profile` (whose likelihood-ratio cutoff relies on it) throw an `ArgumentError`. The valid options for a weighted data model are `method = :wald` with `vcov = :sandwich` or `:auto`, `method = :mcmc_refit`, and `method = :chain` for `MCMC`/`VI` fits.
 - `fit_cv` adds a `:weight` column to `get_obs_scores` and weights each held-out individual's scores by its weight in the fold totals; `mean_obs_loglikelihood` divides the weighted sum by the summed weights of the scored observations. The per-row `:loglikelihood` values stay unweighted. Pass `weighted = false` for unweighted totals. The training fits are weighted either way.
 
-### Conditional-Likelihood Weights
+## Conditional-Likelihood Weights
 
 `weights` multiplies the log marginal likelihood of a batch and therefore has to be equal for all individuals that share a random-effect level. `DataModel(model, df; likelihood_weights = :v)` attaches a weight `v_i` to the conditional likelihood of each individual instead, and `v_i` may differ within a batch. The objective of the marginal-likelihood methods is
 

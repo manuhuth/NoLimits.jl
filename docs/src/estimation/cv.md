@@ -237,7 +237,7 @@ res_cv = fit_cv(cv, NoLimits.SAEM();
 )
 ```
 
-## Likelihood Weights
+## Batch and Likelihood Weights
 
 With `weights` or `likelihood_weights` the fold totals multiply each held-out individual's scores by `w_b v_i` (`weighted = false` gives unweighted totals). The per-row scores and the `:conditional` draws of seen individuals ignore `likelihood_weights`.
 

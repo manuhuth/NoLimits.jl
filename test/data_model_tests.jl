@@ -1942,7 +1942,7 @@ end
     @test !NoLimits._obs_is_missing([0.1, 0.2])
 end
 
-@testset "likelihood weights column validation" begin
+@testset "batch and likelihood weights column validation" begin
     mk(d; kw...) = DataModel(fx_re_model(), d; primary_id = :ID, time_col = :t, kw...)
     base = copy(fx_re_df())
     ok = copy(base)

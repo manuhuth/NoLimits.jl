@@ -749,7 +749,7 @@ performance on the held-out test set. All `kwargs` are forwarded to
 - `fold_serialization`: controls fold-level parallelism. Use `EnsembleThreads()`
   to evaluate folds concurrently.
 - `constants_re`: fix specific RE levels on the natural scale.
-- `weighted`: when the `DataModel` has likelihood weights (see [`get_weights`](@ref) and
+- `weighted`: when the `DataModel` has batch or likelihood weights (see [`get_weights`](@ref) and
   [`get_likelihood_weights`](@ref)) and this is `true` (default), each held-out individual's
   scores are multiplied by its weight `w·v` in the fold totals, and `mean_obs_loglikelihood` divides the weighted sum by the
   summed weights of the scored observations. A `:weight` column is added to
