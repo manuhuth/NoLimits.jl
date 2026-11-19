@@ -243,6 +243,10 @@ method = NoLimits.MCEM(;
     # Bounds
     lb=nothing,
     ub=nothing,
+
+    # Observed information for Wald UQ (Louis' identity)
+    louis=:online,
+    louis_draws=500,
 )
 ```
 
@@ -394,6 +398,16 @@ ok      = get_converged(res)
 
 re_df   = get_random_effects(res)
 ```
+
+## Observed Information
+
+With `louis = :online` (the default) or `louis = :posterior` the fit stores the observed Fisher information of the free fixed effects, estimated with Louis' identity [louis1982finding](@cite), and `compute_uq(res; method = :wald)` uses it in place of the FOCEI or Laplace marginal Hessian. The information is formed per batch, `I = Σ_b (-E_b[∇²ℓ_b] - Var_b[∇ℓ_b])`, with the same weighted sandwich as for [SAEM](saem.md) when `likelihood_weights` are set.
+
+- `:online` uses the draws of the final E-step. They target the posterior at the previous iterate, so self-normalized importance weights move them to the estimate; `MCEM_IS` draws keep their importance weights in both the mean and the covariance. With the default 25 draws per batch the information is noisy when the random effects are strongly shrunk (in a linear Gaussian test model the standard error of the intercept varied by up to about 30% between seeds).
+- `:posterior` draws `louis_draws` (500 by default) fresh samples per batch at the estimate, continuing copies of the final chains with forked per-batch random-number generators.
+- `false` stores nothing; Wald UQ uses the marginal Hessian.
+
+The estimates are bitwise identical for every value of `louis`.
 
 ## Likelihood Weights
 

@@ -172,6 +172,10 @@ method = NoLimits.SAEM(;
     anneal_to_fixed=(),
     anneal_schedule=:exponential,
     anneal_min_sd=1e-5,
+
+    # Observed information for Wald UQ (Louis' identity)
+    louis=:posterior,
+    louis_draws=500,
 )
 ```
 
@@ -418,6 +422,20 @@ After convergence, SAEM computes empirical Bayes modal estimates of the random e
 - `anneal_min_sd`
   - Target SD reached at the final iteration.
   - Default: `1e-5`.
+
+### Observed Information Inputs
+
+With `louis = :posterior` (the default) or `louis = :online` the fit stores the observed Fisher information of the free fixed effects, estimated with Louis' identity [louis1982finding](@cite) from posterior draws of the random effects, and `compute_uq(res; method = :wald)` uses it in place of the FOCEI or Laplace marginal Hessian. Writing `ℓ_b` for the complete-data log-likelihood of batch `b` and `E_b`, `Var_b` for moments under its random-effect posterior, the information is `I = Σ_b (-E_b[∇²ℓ_b] - Var_b[∇ℓ_b])`, formed per batch so that Monte Carlo noise does not enter through cross-batch products. With `likelihood_weights` the weighted fit solves `Σ_b E_b[∇ℓ_{w,b}] = 0` under the unweighted posterior, and `compute_uq` uses the sandwich `A⁻¹ B A⁻ᵀ` with `A = Σ_b w_b (-E_b[∇²ℓ_{w,b}] - Cov_b(∇ℓ_{w,b}, ∇ℓ_{u,b}))` and `B = Σ_b w_b² E_b[∇ℓ_{w,b}] E_b[∇ℓ_{w,b}]ᵀ`.
+
+Both modes follow the stochastic approximation of the information of [kuhn2005maximum](@citet).
+
+- `:posterior` runs a post-fit phase of `louis_draws` iterations (500 by default). The parameters are frozen at the estimate, copies of the final chains continue with forked per-batch random-number generators without a new burn-in, and the integrand of every iteration enters an equal-weight average. It resembles nlmixr2's `covMethod = "sa"`, without identical numerics. The phase is decoupled from the cooling schedule. Averaging with the step sizes γ_k of the parameter updates would leave an effective sample size of about 2 iterations at the earliest windowed stop and about 16 at `maxiters = 300`, which is too few for the score cross-products.
+- `:online` averages, with equal weights, over the decreasing-step iterations of the fit itself, at no extra cost. It resembles nlmixr2's `covMethod = "fim"`, without identical numerics. If fewer than 20 such iterations are available, no information is stored and `compute_uq` falls back to the marginal Hessian with a warning.
+- `false` stores nothing; Wald UQ uses the marginal Hessian.
+
+The Louis computations draw no random numbers from the fit's streams, so the estimates are bitwise identical for every value of `louis`. No information is stored under `MiniBatch` or `anneal_to_fixed`.
+
+The estimate subtracts the posterior variance of the score from the complete-data information. When the random effects are strongly shrunk, the two are close and the difference carries relative Monte Carlo error; increase `louis_draws` if repeated fits give visibly different standard errors.
 
 ## Advanced usage
 
