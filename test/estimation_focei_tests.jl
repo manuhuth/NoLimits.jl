@@ -207,6 +207,19 @@ end
     margfoce(x) = NL.laplace_marginal(dm, ComponentArray(x, getaxes(θd)); curvature = foce, ebe_options = ebe)
     @test collect(gfoce) ≈ FiniteDifferences.grad(central_fdm(5, 1), margfoce, collect(θd))[1] rtol = 1.0e-5
 
+    # FOCE() is FOCEI(interaction = false) (#435): same objective and gradient, here and on
+    # the shared fixture; interaction=true differs since σ depends on η.
+    og = NL.objective_and_gradient
+    for (d, θx) in ((dm, θd), (fx_re_dm(), NL.get_params(fx_re_dm(); scale = :untransformed)))
+        v1, g1 = og(NL.FOCE(), d, θx)
+        v2, g2 = og(NL.FOCEI(interaction = false), d, θx)
+        @test v1 == v2
+        @test collect(g1) == collect(g2)
+    end
+    @test og(NL.FOCE(), dm, θd)[1] != og(NL.FOCEI(), dm, θd)[1]
+    @test NL.FOCE(; jitter = 1.0e-5).hessian.jitter == 1.0e-5
+    @test_throws ArgumentError NL.FOCE(interaction = true)
+
     # FOCE end-to-end fit runs.
     rf = fit_model(
         dm,

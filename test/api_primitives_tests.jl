@@ -1455,6 +1455,8 @@ end
         @test collect(NoLimits.get_params(rw; scale = :transformed)) ≈
             collect(NoLimits.get_params(rd; scale = :transformed)) rtol = 1.0e-6
         @test NoLimits.get_loglikelihood(rw) ≈ NoLimits.get_loglikelihood(rd) rtol = 1.0e-6
+        # Inverse-Hessian UQ is rejected for a weighted fit before any Hessian (#437).
+        @test_throws r"likelihood weights" compute_uq(rw; method = :wald, vcov = :hessian)
     end
 
     # Weight 0 is removal, also for an individual whose log-likelihood is -Inf (#425).
@@ -1521,6 +1523,13 @@ end
     uq0s = compute_uq(rn0; method = :wald, vcov = :sandwich, rng = Random.Xoshiro(1))
     @test NoLimits.get_uq_vcov(uq2; scale = :transformed) ≈
         NoLimits.get_uq_vcov(uq0s; scale = :transformed) rtol = 1.0e-3
+    # :hessian and :profile (also via :auto + interval = :profile) are rejected with weights.
+    @test_throws ArgumentError compute_uq(rn2; method = :wald, vcov = :hessian)
+    @test_throws r"vcov = :hessian.*likelihood weights" compute_uq(rn2; method = :wald, vcov = :hessian)
+    @test_throws r"method = :profile.*likelihood weights" compute_uq(rn2; method = :profile)
+    @test_throws r"method = :profile.*likelihood weights" compute_uq(rn2; interval = :profile)
+    @test NoLimits.get_uq_diagnostics(compute_uq(rn2; vcov = :sandwich, rng = Random.Xoshiro(1))).vcov == :sandwich
+    @test NoLimits.get_uq_diagnostics(compute_uq(rn0; vcov = :hessian, rng = Random.Xoshiro(1))).vcov == :hessian
 
     # CV: held-out scores are weighted by default; `weighted = false` turns that off.
     dfn.wr = [0.5 + 0.25 * id for id in dfn.ID]

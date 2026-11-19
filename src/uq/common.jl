@@ -19,9 +19,24 @@ end
 # Which UQ backends can actually replace Wald for a fit produced by `method_sym`. Profile
 # UQ is restricted to MLE/MAP/Laplace/GHQuadrature, so recommending it to an MCEM or SAEM
 # user sends them into an error instead of an alternative.
-@inline function _wald_fallback_methods(method_sym::Symbol)
+@inline function _wald_fallback_methods(method_sym::Symbol, weighted::Bool = false)
+    weighted && return "method = :mcmc_refit"
     return method_sym in (:mle, :map, :laplace, :ghquadrature) ?
         "method = :profile / :mcmc_refit" : "method = :mcmc_refit"
+end
+
+# UQ backends that remain valid for a DataModel with likelihood weights (#437).
+const _WEIGHTED_UQ_OPTIONS = "method = :wald with vcov = :sandwich (vcov = :auto selects it), " *
+    "method = :mcmc_refit (or :chain for an MCMC/VI fit)"
+
+# With weights the information identity fails (the score covariance scales with w^2, the
+# Hessian with w), so the inverse Hessian and the profile cutoff built on it are invalid.
+function _weighted_uq_error(what::AbstractString)
+    return ArgumentError(
+        "$(what) is not available for a DataModel with likelihood weights: the inverse " *
+            "Hessian of a weighted objective is not a valid covariance, and the profile " *
+            "likelihood-ratio cutoff relies on it. Use " * _WEIGHTED_UQ_OPTIONS * "."
+    )
 end
 
 function _validate_level(level::Real)

@@ -81,7 +81,7 @@ end
 # sum to zero, so with one cluster - or near-duplicate clusters - the meat collapses to
 # (numerically) zero and the sandwich reports standard errors far TIGHTER than the Hessian
 # ones, with nothing in the output to show it (issue #306).
-function _wald_meat_diag(B::Matrix{Float64}, H::AbstractMatrix, n_cluster::Int)
+function _wald_meat_diag(B::Matrix{Float64}, H::AbstractMatrix, n_cluster::Int, weighted::Bool = false)
     n_active = size(B, 1)
     meat_rank = rank(B)
     meat_scale = opnorm(B)
@@ -91,7 +91,8 @@ function _wald_meat_diag(B::Matrix{Float64}, H::AbstractMatrix, n_cluster::Int)
         "has rank $(meat_rank) for $(n_active) parameter(s) over $(n_cluster) " *
         "cluster(s). Per-cluster scores sum to zero at the optimum, so few or " *
         "near-duplicate clusters collapse the meat and the resulting standard errors " *
-        "are unusable (too small). Use vcov = :hessian." n_cluster meat_rank
+        "are unusable (too small). " *
+        (weighted ? "Use " * _wald_fallback_methods(:none, true) * "." : "Use vcov = :hessian.") n_cluster meat_rank
     return (; n_cluster = n_cluster, meat_rank = meat_rank, meat_degenerate = degenerate)
 end
 
@@ -151,10 +152,10 @@ end
 function _finalize_wald_uqresult(
         fe, θ_hat_t, θ_hat_u, free_names, active_idx,
         active_names, active_kinds, θu_from_active, Vt_raw, backend_used, vcov,
-        pseudo_inverse, n_draws, level, rng, method_sym, extra_diag
+        pseudo_inverse, n_draws, level, rng, method_sym, extra_diag, weighted::Bool = false
     )
     Vt, vcov_diag = _project_psd_covariance(
-        Vt_raw; fallbacks = _wald_fallback_methods(method_sym)
+        Vt_raw; fallbacks = _wald_fallback_methods(method_sym, weighted)
     )
 
     θ_coords_t = _coords_on_transformed_layout(fe, θ_hat_t, free_names; natural = false)
@@ -447,7 +448,8 @@ function _compute_uq_wald_no_re(
         "Wald covariance unavailable: the objective Hessian at the estimate is not " *
             "finite (backend $(backend_used)). The fit is at a point where the marginal " *
             "is not differentiable - typically a degenerate random-effect covariance or an " *
-            "unconverged fit. Check the fit converged, or use method = :profile / :mcmc."
+            "unconverged fit. Check the fit converged, or use " *
+            _wald_fallback_methods(_method_symbol(method), _has_likelihood_weights(dm)) * "."
     )
 
     bread = _wald_bread(H_active, pseudo_inverse, active_names)
@@ -484,7 +486,7 @@ function _compute_uq_wald_no_re(
             B .+= _ind_weight(dm, i)^2 .* (g * g')
         end
         B = 0.5 .* (B .+ B')
-        meat_diag = _wald_meat_diag(B, H_active, length(get_individuals(dm)))
+        meat_diag = _wald_meat_diag(B, H_active, length(get_individuals(dm)), _has_likelihood_weights(dm))
         M = bread * B * bread'
         Matrix{Float64}(0.5 .* (M .+ M'))
     else
@@ -494,7 +496,8 @@ function _compute_uq_wald_no_re(
     return _finalize_wald_uqresult(
         fe, θ_hat_t, θ_hat_u, free_names, active_idx,
         active_names, active_kinds, _θu_from_active, Vt_raw, backend_used, vcov,
-        pseudo_inverse, n_draws, level, rng, _method_symbol(method), meat_diag
+        pseudo_inverse, n_draws, level, rng, _method_symbol(method), meat_diag,
+        _has_likelihood_weights(dm)
     )
 end
 
@@ -724,7 +727,7 @@ function _compute_uq_wald_re(
             B .+= g * g'
         end
         B = 0.5 .* (B .+ B')
-        meat_diag = _wald_meat_diag(B, H_active, length(batch_infos))
+        meat_diag = _wald_meat_diag(B, H_active, length(batch_infos), _has_likelihood_weights(dm))
         M = bread * B * bread'
         Matrix{Float64}(0.5 .* (M .+ M'))
     else
@@ -735,6 +738,7 @@ function _compute_uq_wald_re(
         fe, θ_hat_t, θ_hat_u, free_names, active_idx,
         active_names, active_kinds, _θu_from_active, Vt_raw, backend_used, vcov,
         pseudo_inverse, n_draws, level, rng, _method_symbol(source_method),
-        merge((; approximation_method = _method_symbol(approx_method)), meat_diag)
+        merge((; approximation_method = _method_symbol(approx_method)), meat_diag),
+        _has_likelihood_weights(dm)
     )
 end
