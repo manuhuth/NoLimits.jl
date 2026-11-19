@@ -310,12 +310,12 @@ marginal likelihood that `Laplace`/`FOCEI`/`GHQuadrature` maximize.
     With the default 25 draws per batch the information is noisy when the random effects
     are strongly shrunk.
   - `:posterior`: `louis_draws` fresh draws per batch at the estimate, continuing copies of
-    the final chains with forked per-batch random-number generators (a Turing-based sampler
-    is replaced by `SaemixMH`, started from the last draw).
+    the final chains in one call of the E-step sampler per batch, with forked per-batch
+    random-number generators.
   - `false`: no Louis information; Wald UQ uses the marginal Hessian.
   Louis draws no random numbers from the fit's streams, so the estimates are bitwise
   identical for every value. No information is stored under `MiniBatch`.
-- `louis_draws::Int = 500`: draws per batch for `louis = :posterior`.
+- `louis_draws::Int = 200`: draws per batch for `louis = :posterior`.
 """
 struct MCEM{O, K, A, ES, EO, EB, ER, L, U, US, RV, RC, RM} <: FittingMethod
     optimizer::O
@@ -383,7 +383,7 @@ function MCEM(;
         re_cov_params = NamedTuple(),
         re_mean_params = NamedTuple(),
         louis::Union{Bool, Symbol} = :online,
-        louis_draws::Int = 500
+        louis_draws::Int = _LOUIS_DRAWS
     )
     louis = _louis_mode("MCEM", louis, louis_draws)
     diagnostics_every >= 1 ||
@@ -2353,8 +2353,7 @@ function _fit_model(
                 dm_s, batch_infos, θ_hat_u, const_cache,
                 louis_st.cache isa Vector ? louis_st.cache[1] : louis_st.cache,
                 method.e_step, prev_use_mcmc === true, batch_rngs, re_names, re_types,
-                last_params, proposal_blocks, samples_by_batch, method.louis_draws,
-                length(diag.Q_hist) + 1
+                last_params, proposal_blocks, method.louis_draws, length(diag.Q_hist) + 1
             )
         else
             samples_by_batch, _louis_reweight(

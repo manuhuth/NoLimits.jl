@@ -607,9 +607,10 @@ that `Laplace`/`FOCEI`/`GHQuadrature` maximize.
     approximation of the information of Kuhn and Lavielle (2005). θ is frozen at the
     estimate, copies of the last chains continue with forked per-batch random-number
     generators (no new burn-in), and the Louis integrand of every iteration enters an
-    equal-weight average. A Turing-based `sampler` is replaced by `SaemixMH` there, started
-    from the last draws, since a Turing `sample` call per batch and iteration is slow. This resembles nlmixr2's `covMethod = "sa"` without claiming
-    identical numerics. The phase is decoupled from the cooling schedule: averaging with
+    equal-weight average. Since θ is fixed, each chain runs in one call of the fit's
+    `sampler` per batch (`louis_draws` E-steps of the same length as in the fit, the last
+    step of each kept), so a Turing sampler is set up once per batch and chain. This
+    resembles nlmixr2's `covMethod = "sa"` without claiming identical numerics. The phase is decoupled from the cooling schedule: averaging with
     the step sizes γ_k of the parameter updates would leave an effective sample size of
     about 2 to 16 iterations under the default schedule, too few for the score
     cross-products.
@@ -621,7 +622,7 @@ that `Laplace`/`FOCEI`/`GHQuadrature` maximize.
   Louis draws no random numbers from the fit's streams, so the estimates are bitwise
   identical for every value. No information is stored under `MiniBatch` or
   `anneal_to_fixed`.
-- `louis_draws::Int = 500`: iterations of the `:posterior` phase.
+- `louis_draws::Int = 200`: E-step iterations of the `:posterior` phase.
 """
 struct SAEM{O, K, A, SO, L, U} <: FittingMethod
     optimizer::O
@@ -706,7 +707,7 @@ function SAEM(;
         diagnostics_every::Int = 1,
         precondition::Bool = true,
         louis::Union{Bool, Symbol} = :posterior,
-        louis_draws::Int = 500
+        louis_draws::Int = _LOUIS_DRAWS
     )
     sa_schedule = _as_symbol(sa_schedule)
     ebe_multistart_sampling = _as_symbol(ebe_multistart_sampling)
@@ -4892,8 +4893,8 @@ function _fit_model(
         _saem_louis_postfit!(
             louis_st, dm, dm_s, batch_infos, θ_hat_u,
             Vector{Float64}(collect(θ_hat_t[louis_names])), const_cache,
-            method.saem.sampler, tkwargs, batch_rngs, re_names, method.saem.warm_start,
-            last_chain_params, b_chains, effective_n_chains, serialization,
+            method.saem.sampler, tkwargs, batch_rngs, re_names, true,
+            last_chain_params, effective_n_chains, serialization,
             method.saem.louis_draws, length(diag.Q_hist)
         )
         _louis_finish(louis_st, dm, batch_infos, louis_coords)

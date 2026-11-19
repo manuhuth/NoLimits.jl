@@ -250,6 +250,9 @@ _louis_note(status::Symbol) = (; A = nothing, B = nothing, coords = nothing, n =
 # back to the FOCEI/Laplace marginal Hessian.
 const _LOUIS_MIN_ITERS = 20
 
+# Default length of the :posterior phase (E-step iterations for SAEM, draws per batch for MCEM).
+const _LOUIS_DRAWS = 200
+
 # Louis state of one fit: its own likelihood cache (the fit's caches are never touched),
 # work buffers and the running averages of S and the per-batch scores.
 function _louis_init(
@@ -289,33 +292,36 @@ function _louis_finish(st, dm::DataModel, batch_infos, coords::Vector{Symbol}; m
     return _louis_note(A, B, coords, st.n[], :ok)
 end
 
-# SAEM post-fit Louis phase (as nlmixr2 covMethod = "sa"): θ frozen at θ̂, copies of the
-# last chains and per-batch RNGs continue for n_iter E-steps, each averaged with equal
-# weight. The fit's chains, RNG streams and caches are untouched.
+# SAEM post-fit Louis phase (as nlmixr2 covMethod = "sa"): θ frozen at θ̂, so the target is
+# fixed and each chain continues in ONE sampler call per batch of n_iter E-steps (k sweeps or
+# Turing steps each, the last kept, as in the fit), from copies of the last chain states and
+# per-batch RNGs. All draws enter one equal-weight average; the fit's state is untouched.
 function _saem_louis_postfit!(
         st, dm::DataModel, dm_s::DataModel, batch_infos, θu, x::Vector{Float64}, const_cache,
-        sampler, tkwargs, batch_rngs, re_names, warm_start, last_chain_params, b_chains,
+        sampler, tkwargs, batch_rngs, re_names, warm_start, last_chain_params,
         nc::Int, serialization, n_iter::Int, iter::Int
     )
-    rngs = [copy(r) for r in batch_rngs]
-    bch = deepcopy(b_chains)
-    lcp = if sampler isa SaemixMH
-        deepcopy(last_chain_params)
-    else
-        # a Turing sampler pays a full sample() setup per call; the native kernel continues
-        # the chains from their last draws instead
-        nbmax = maximum((get_n_b(info) for info in batch_infos); init = 1)
-        sampler, tkwargs = SaemixMH(), (n_samples = max(1, cld(nbmax, 3)),)
-        [Any[Vector{Float64}(bch[bi][c]) for c in 1:nc] for bi in eachindex(bch)]
+    k = max(1, get(tkwargs, :n_samples, 1))
+    tk = merge(tkwargs, (n_samples = n_iter * k,))
+    draws = Vector{Vector{Vector{Float64}}}(undef, length(batch_infos))
+    _saem_foreach_batch(dm_s, st.cache, length(batch_infos), serialization) do bi, cache
+        info = batch_infos[bi]
+        out = Vector{Vector{Float64}}()
+        if get_n_b(info) > 0
+            rng = copy(batch_rngs[bi])
+            for c in 1:nc
+                s, _, _ = _mcem_sample_batch(
+                    dm_s, info, θu, const_cache, cache, sampler, tk, rng, re_names,
+                    warm_start, deepcopy(last_chain_params[bi][c]); outer_iter = iter + 1
+                )
+                for j in k:k:size(s, 2)
+                    push!(out, Vector{Float64}(s[:, j]))
+                end
+            end
+        end
+        draws[bi] = out
     end
-    all_b = collect(1:length(batch_infos))
-    for k in 1:n_iter
-        _saem_sample_batches!(
-            dm_s, batch_infos, all_b, θu, const_cache, st.cache, sampler, tkwargs, rngs,
-            re_names, warm_start, lcp, bch, nc, serialization; outer_iter = iter + k
-        )
-        _louis_average!(st, dm, batch_infos, x, bi -> bch[bi], _ -> nothing, serialization)
-    end
+    _louis_average!(st, dm, batch_infos, x, bi -> draws[bi], _ -> nothing, serialization)
     return st
 end
 
@@ -348,8 +354,7 @@ end
 # MCEM louis_draws: fresh draws at θ̂ from copies of the per-batch RNGs and sampler state.
 function _mcem_louis_draws(
         dm_s::DataModel, batch_infos, θu, const_cache, cache, e_step, use_mcmc::Bool,
-        batch_rngs, re_names, re_types, last_params, proposal_blocks, samples_by_batch,
-        n_draws::Int, iter::Int
+        batch_rngs, re_names, re_types, last_params, proposal_blocks, n_draws::Int, iter::Int
     )
     nb = length(batch_infos)
     smp = Vector{Matrix{Float64}}(undef, nb)
@@ -362,14 +367,12 @@ function _mcem_louis_draws(
             ws === nothing || (ws[bi] = Float64[])
         elseif use_mcmc
             es = _mcmc_e_step(e_step)
-            # Turing samplers: the native kernel continues from the last fit draw (see SAEM)
-            native = es.sampler isa SaemixMH
-            thin = native ? _mcem_thin_of(es) : 1
-            tk = native ? merge(es.turing_kwargs, (n_samples = n_draws * thin,)) : (n_samples = n_draws,)
+            # one sampler call per batch: the target is fixed at θ̂
+            thin = _mcem_thin_of(es)
+            tk = merge(es.turing_kwargs, (n_samples = n_draws * thin,))
             s, _, _ = _mcem_sample_batch(
-                dm_s, info, θu, const_cache, cache, native ? es.sampler : SaemixMH(), tk, rng,
-                re_names, true, native ? deepcopy(last_params[bi]) : Vector{Float64}(samples_by_batch[bi][:, end]);
-                outer_iter = iter
+                dm_s, info, θu, const_cache, cache, es.sampler, tk, rng, re_names,
+                es.warm_start, deepcopy(last_params[bi]); outer_iter = iter
             )
             smp[bi] = _mcem_thin(s, thin)
         else

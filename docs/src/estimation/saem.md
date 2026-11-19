@@ -175,7 +175,7 @@ method = NoLimits.SAEM(;
 
     # Observed information for Wald UQ (Louis' identity)
     louis=:posterior,
-    louis_draws=500,
+    louis_draws=200,
 )
 ```
 
@@ -429,7 +429,7 @@ With `louis = :posterior` (the default) or `louis = :online` the fit stores the 
 
 Both modes follow the stochastic approximation of the information of [kuhn2005maximum](@citet).
 
-- `:posterior` runs a post-fit phase of `louis_draws` iterations (500 by default). The parameters are frozen at the estimate, copies of the final chains continue with forked per-batch random-number generators without a new burn-in, and the integrand of every iteration enters an equal-weight average. A Turing-based `sampler` is replaced there by `SaemixMH`, started from the last draws. It resembles nlmixr2's `covMethod = "sa"`, without identical numerics. The phase is decoupled from the cooling schedule. Averaging with the step sizes γ_k of the parameter updates would leave an effective sample size of about 2 iterations at the earliest windowed stop and about 16 at `maxiters = 300`, which is too few for the score cross-products.
+- `:posterior` runs a post-fit phase of `louis_draws` iterations (200 by default). The parameters are frozen at the estimate, copies of the final chains continue with forked per-batch random-number generators without a new burn-in, and the integrand of every iteration enters an equal-weight average. Since the parameters are fixed, each chain runs in one call of the fit's `sampler` per batch (`louis_draws` E-steps of the same length as in the fit, the last step of each kept), so a Turing sampler is set up once per batch and chain. It resembles nlmixr2's `covMethod = "sa"`, without identical numerics. The phase is decoupled from the cooling schedule. Averaging with the step sizes γ_k of the parameter updates would leave an effective sample size of about 2 iterations at the earliest windowed stop and about 16 at `maxiters = 300`, which is too few for the score cross-products.
 - `:online` averages, with equal weights, over the decreasing-step iterations of the fit itself, at no extra cost. It resembles nlmixr2's `covMethod = "fim"`, without identical numerics. If fewer than 20 such iterations are available, no information is stored and `compute_uq` falls back to the marginal Hessian with a warning.
 - `false` stores nothing; Wald UQ uses the marginal Hessian.
 
