@@ -71,7 +71,7 @@ When the covariance matrix requires projection to restore positive semi-definite
 
 ## MCEM/SAEM Approximation Controls
 
-For fits obtained with `MCEM` or `SAEM`, the marginal likelihood is not available in closed form, so the Hessian cannot be computed directly from the EM objective. In these cases, the Wald backend uses a random-effects approximation method during the Hessian evaluation.
+For fits obtained with `MCEM` or `SAEM`, the marginal likelihood is not available in closed form, so the Hessian cannot be computed directly from the EM objective. By default these fits store the observed Fisher information estimated with Louis' identity from posterior draws of the random effects (`louis = :posterior` for SAEM and `louis = :online` for MCEM, see [SAEM](../estimation/saem.md) and [MCEM](../estimation/mcem.md)), and the Wald backend uses it (`approximation_method = :louis`); with `vcov = :sandwich` the meat is built from the per-batch expected scores. Penalty and `extra_objective` terms of the fit are added to it. Otherwise, or when `re_approx`, `re_approx_method`, `constants` or `constants_re` is passed explicitly, the Wald backend uses a random-effects approximation method during the Hessian evaluation.
 
 - `re_approx=:auto` (the default) selects `FOCEI`, or `Laplace` when an outcome distribution has no closed-form Fisher information (for example hidden-Markov outcomes). `re_approx=:focei` and `re_approx=:laplace` select one explicitly.
 - `re_approx_method` allows passing an explicit `Laplace` or `FOCEI` instance for finer control.

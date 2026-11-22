@@ -76,6 +76,8 @@ struct SAEMOptions{
     obsLL_every::Int
     store_diagnostics::Bool
     diagnostics_every::Int
+    louis::Symbol
+    louis_draws::Int
 end
 
 struct _SAEMQCache{T}
@@ -562,7 +564,10 @@ that `Laplace`/`FOCEI`/`GHQuadrature` maximize.
   `:auto` infers the eligible blocks from the model, `:closed_form` (alias `:gaussian_re`)
   uses the maps below without inference, and `:none` optimizes every free parameter
   numerically. Routing is hybrid: parameters that are not eligible stay on the numeric
-  M-step.
+  M-step. The statistics of a multivariate normal RE (mean and covariance) are averaged with
+  an SA step of at most 0.1, also while γ = 1: resetting a full covariance to the moments of
+  one draw per subject drove its correlation to the rank-1 boundary. A full covariance on the
+  numeric M-step (`builtin_stats = :none`) has no such averaging; use `n_chains > 1` there.
 - `builtin_mean = :none`: `:glm` adds a numerical generalized-linear sub-step for the RE
   mean parameters. `:none` leaves them to the closed-form or numeric M-step.
 - `resid_var_param::Symbol = :σ`: fixed-effect name for the residual standard deviation.
@@ -595,6 +600,32 @@ that `Laplace`/`FOCEI`/`GHQuadrature` maximize.
   that iteration (existing behavior). Has no effect when `mstep_sa_on_params=false`.
 - `retry_mcmc_steps::Int = 1`: number of MCMC steps per retry attempt. Kept small
   (default 1) since the goal is merely to escape the bad RE value, not to fully mix.
+- `louis = :posterior`: observed Fisher information for Wald UQ, estimated with Louis'
+  identity (Louis 1982) from posterior draws of the random effects and stored in the fit
+  result. `compute_uq(res; method = :wald)` then uses it in place of the FOCEI/Laplace
+  marginal Hessian (diagnostic `approximation_method = :louis`); an explicit `re_approx`,
+  `re_approx_method`, `constants` or `constants_re` in `compute_uq` selects the marginal
+  Hessian again. Values:
+  - `:posterior` (default): a post-fit phase of `louis_draws` iterations, the stochastic
+    approximation of the information of Kuhn and Lavielle (2005). θ is frozen at the
+    estimate, copies of the last chains continue with forked per-batch random-number
+    generators (no new burn-in), and the Louis integrand of every iteration enters an
+    equal-weight average. Since θ is fixed, each chain runs in one call of the fit's
+    `sampler` per batch (`louis_draws` E-steps of the same length as in the fit, the last
+    step of each kept), so a Turing sampler is set up once per batch and chain. This
+    resembles nlmixr2's `covMethod = "sa"` without claiming identical numerics. The phase is decoupled from the cooling schedule: averaging with
+    the step sizes γ_k of the parameter updates would leave an effective sample size of
+    about 2 to 16 iterations under the default schedule, too few for the score
+    cross-products.
+  - `:online`: equal-weight averaging over the decreasing-step iterations of the fit itself,
+    at no extra cost (resembles nlmixr2's `covMethod = "fim"`). With fewer than 20 such
+    iterations no information is stored and `compute_uq` falls back to the marginal Hessian
+    with a warning.
+  - `false`: no Louis information; Wald UQ uses the marginal Hessian.
+  Louis draws no random numbers from the fit's streams, so the estimates are bitwise
+  identical for every value. No information is stored under `MiniBatch` or
+  `anneal_to_fixed`.
+- `louis_draws::Int = 500`: E-step iterations of the `:posterior` phase.
 """
 struct SAEM{O, K, A, SO, L, U} <: FittingMethod
     optimizer::O
@@ -677,7 +708,9 @@ function SAEM(;
         obsLL_every::Int = 1,
         store_diagnostics::Bool = false,
         diagnostics_every::Int = 1,
-        precondition::Bool = true
+        precondition::Bool = true,
+        louis::Union{Bool, Symbol} = :posterior,
+        louis_draws::Int = _LOUIS_DRAWS
     )
     sa_schedule = _as_symbol(sa_schedule)
     ebe_multistart_sampling = _as_symbol(ebe_multistart_sampling)
@@ -710,6 +743,7 @@ function SAEM(;
         error("SAEM: obsLL_every must be ≥ 1. Got: $obsLL_every")
     diagnostics_every >= 1 ||
         error("SAEM: diagnostics_every must be ≥ 1. Got: $diagnostics_every")
+    louis = _louis_mode("SAEM", louis, louis_draws)
     convergence_window >= 4 ||
         error("SAEM: convergence_window must be ≥ 4. Got: $convergence_window")
     maxiters >= 1 ||
@@ -763,8 +797,9 @@ function SAEM(;
         mcmc_steps
     saem = SAEMOptions(
         sampler, turing_kwargs, :all, warm_start, verbose, progress,
-        resolved_mcmc_steps, q_store_max, q_store_epsilon, q_store_min, resolved_t0, kappa,
-        maxiters, rtol_theta, atol_theta, rtol_Q, atol_Q, consecutive_params,
+        resolved_mcmc_steps, q_store_max, q_store_epsilon, q_store_min, resolved_t0, Float64(kappa),
+        maxiters, Float64(rtol_theta), Float64(atol_theta), Float64(rtol_Q), Float64(atol_Q),
+        consecutive_params,
         convergence_window,
         suffstats, q_from_stats, mstep_closed_form,
         builtin_stats, builtin_mean, resid_var_param, re_cov_params, re_mean_params,
@@ -778,7 +813,7 @@ function SAEM(;
         sa_anneal_targets, sa_anneal_schedule, resolved_sa_anneal_iters, sa_anneal_alpha,
         sa_anneal_fn,
         auto_var_lb, var_lb_value, max_estep_retries, retry_mcmc_steps,
-        store_obsLL, obsLL_every, store_diagnostics, diagnostics_every
+        store_obsLL, obsLL_every, store_diagnostics, diagnostics_every, louis, louis_draws
     )
     return SAEM(optimizer, optim_kwargs, _normalize_adtype(adtype), saem, lb, ub, precondition)
 end
@@ -2779,7 +2814,12 @@ function _saem_builtin_collect_current_stats(
     return (re = re_stats, outcome = NamedTuple(outcome_pairs), hmm = NamedTuple(hmm_pairs))
 end
 
-function _saem_builtin_smooth_re_stats(prev_re::NamedTuple, curr_re::NamedTuple, γ::Real)
+# Cap on the SA step of the closed-form statistics of multivariate normal REs (mean and
+# second moment). With γ = 1 the full Ω was reset each iteration to the moments of one draw per
+# subject; that noise fed back through the posterior draws and drove the correlation to the
+# rank-1 boundary, which is absorbing (#441). A ~10-iteration memory removes it at no cost.
+const _SAEM_MVN_STATS_GAMMA_CAP = 0.1
+function _saem_builtin_smooth_re_stats(prev_re::NamedTuple, curr_re::NamedTuple, γ0::Real)
     keys_order = Symbol[collect(keys(prev_re))...]
     for re in keys(curr_re)
         re in keys_order || push!(keys_order, re)
@@ -2789,6 +2829,8 @@ function _saem_builtin_smooth_re_stats(prev_re::NamedTuple, curr_re::NamedTuple,
         if haskey(prev_re, re) && haskey(curr_re, re)
             p = getfield(prev_re, re)
             c = getfield(curr_re, re)
+            fam = hasproperty(c, :family) ? c.family : :normal
+            γ = fam === :mvnormal ? min(γ0, _SAEM_MVN_STATS_GAMMA_CAP) : γ0
             push!(
                 pairs,
                 re => (
@@ -3864,6 +3906,7 @@ function _fit_model(
         error("SAEM requires at least one free fixed effect. Remove constants or specify a fixed effect or random effect.")
 
     base_free_names = [n for n in fixed_names if !(n in keys(constants))]
+    louis_names = copy(base_free_names)   # base_free_names shrinks per iteration
     θ0_u = get_θ0_untransformed(fe)
     if theta_0_untransformed !== nothing
         for n in fixed_names
@@ -4150,6 +4193,15 @@ function _fit_model(
             method.saem.maxiters <= method.saem.sa_burnin_iters
         @warn "SAEM: maxiters = $(method.saem.maxiters) <= sa_burnin_iters = $(method.saem.sa_burnin_iters), so every iteration is burn-in (γ = 0) and skips the M-step. θ is returned at its start value, up to the variance-floor and sa_anneal clamps. Lower sa_burnin_iters or raise maxiters."
     end
+    louis_status = method.saem.louis === :off ? :off :
+        method.saem.update_schedule !== :all ? :minibatch :
+        do_anneal ? :anneal_to_fixed : :ok
+    louis_st = louis_status === :ok ? _louis_init(
+            dm, batch_infos,
+            _LouisThetaMap(axs_free, θ_const_t, axs_full, louis_names, inv_transform),
+            const_cache, Vector{Float64}(collect(θt_full_init[louis_names]));
+            ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization
+        ) : nothing
     mstep_curv = _SAEMMStepCurvature()
     for iter in 1:(method.saem.maxiters)
         γ = _saem_gamma_schedule(iter, method.saem)
@@ -4238,6 +4290,17 @@ function _fit_model(
                 _saem_update_b_current!(b_current, b_chains, bad)
                 _saem_store_push!(sample_store, b_chains, γ, effective_n_chains)
             end
+        end
+
+        # Louis: average the E-step moments over the decreasing-step phase, at the θ the
+        # draws target. Equal weights, not γ (see the SAEM docstring).
+        if louis_st !== nothing && method.saem.louis === :online && γ > 0 &&
+                _saem_past_stabilization_phase(iter, method.saem) &&
+                !(do_sa_anneal && iter <= sa_anneal_iters_eff)
+            _louis_average!(
+                louis_st, dm, batch_infos, Vector{Float64}(collect(θt_full_curr[louis_names])),
+                bi -> b_chains[bi], _ -> nothing, serialization
+            )
         end
 
         if γ == 0.0
@@ -4834,6 +4897,22 @@ function _fit_model(
     end
     θ_hat_u = inv_transform(θ_hat_t)
 
+    louis_coords = _flat_names_for_free(fe, louis_names)
+    louis_note = if louis_st === nothing
+        _louis_note(louis_status)
+    elseif method.saem.louis === :posterior
+        _saem_louis_postfit!(
+            louis_st, dm, dm_s, batch_infos, θ_hat_u,
+            Vector{Float64}(collect(θ_hat_t[louis_names])), const_cache,
+            method.saem.sampler, tkwargs, batch_rngs, re_names, true,
+            last_chain_params, effective_n_chains, serialization,
+            method.saem.louis_draws, length(diag.Q_hist)
+        )
+        _louis_finish(louis_st, dm, batch_infos, louis_coords)
+    else
+        _louis_finish(louis_st, dm, batch_infos, louis_coords; min_n = _LOUIS_MIN_ITERS)
+    end
+
     closed_form_used = closed_form_builtin_used || closed_form_custom_used
     closed_form_sources = Symbol[]
     closed_form_builtin_used && push!(closed_form_sources, :builtin_stats)
@@ -4851,6 +4930,7 @@ function _fit_model(
         anneal_to_fixed = method.saem.anneal_to_fixed,
         # stride of `diagnostics.θ_hist` (kept so reloaded fits can plot EM trajectories)
         diagnostics_every = method.saem.diagnostics_every,
+        louis = louis_note,
     )
     # A non-finite Q means the E-step's sample landed where the model cannot be evaluated.
     # Report it as-is: substituting an earlier finite Q would pair an objective from one

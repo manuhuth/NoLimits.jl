@@ -612,7 +612,7 @@ function fx_saem()
     return _fx(
         :saem,
         () -> fit_model(
-            fx_re_dm(), NoLimits.SAEM(; maxiters = 2, q_store_max = 2);
+            fx_re_dm(), NoLimits.SAEM(; louis_draws = 50, maxiters = 2, q_store_max = 2);
             serialization = _SER, rng = Random.Xoshiro(0)
         )
     )

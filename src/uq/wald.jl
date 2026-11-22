@@ -38,7 +38,8 @@ function _wald_pinv(H::AbstractMatrix, active_names)
     return F.V * Diagonal(Sinv) * F.U'
 end
 
-function _wald_bread(H::AbstractMatrix, pseudo_inverse::Bool, active_names)
+# `symmetrize = false` keeps the inverse of a non-symmetric bread (weighted Louis A).
+function _wald_bread(H::AbstractMatrix, pseudo_inverse::Bool, active_names; symmetrize::Bool = true)
     F = svd(H)
     smax = isempty(F.S) ? 0.0 : maximum(F.S)
     # Zero curvature is no information, not infinite precision. ForwardDiff returns an
@@ -74,6 +75,7 @@ function _wald_bread(H::AbstractMatrix, pseudo_inverse::Bool, active_names)
         )
         _wald_pinv(H, active_names)
     end
+    symmetrize || return Matrix{Float64}(bread)
     return Matrix{Float64}(0.5 .* (bread .+ bread'))
 end
 
@@ -594,6 +596,43 @@ function _compute_uq_wald_re(
         x_full[active_idx] .= x_active
         return _theta_u_from_free_t(
             x_full, axs_free, θ_const_t, axs_full, free_names, inv_transform
+        )
+    end
+
+    lou = _louis_for_uq(
+        res, source_method, re_approx, re_approx_method, constants, constants_re,
+        free_flat_names
+    )
+    if lou !== nothing
+        weighted = _has_likelihood_weights(dm)
+        A = lou.A[active_idx, active_idx]
+        # deterministic terms of the Wald objective (no priors there)
+        if use_penalty || extra_use !== nothing
+            A = A .+ ForwardDiff.hessian(
+                x -> begin
+                    θu = _θu_from_active(x)
+                    (use_penalty ? _penalty_value(θu, penalty_use) : zero(eltype(x))) +
+                        (extra_use === nothing ? zero(eltype(x)) : extra_use(θu))
+                end, xhat_active
+            )
+        end
+        all(isfinite, A) ||
+            error("Wald covariance unavailable: the stored Louis information is not finite.")
+        meat_diag = NamedTuple()
+        Vt_raw = if vcov == :hessian
+            _wald_bread(0.5 .* (A .+ A'), pseudo_inverse, active_names)
+        else
+            B = lou.B[active_idx, active_idx]
+            bread = _wald_bread(A, pseudo_inverse, active_names; symmetrize = false)
+            meat_diag = _wald_meat_diag(B, A, length(batch_infos), weighted)
+            M = bread * B * bread'
+            Matrix{Float64}(0.5 .* (M .+ M'))
+        end
+        return _finalize_wald_uqresult(
+            fe, θ_hat_t, θ_hat_u, free_names, active_idx,
+            active_names, active_kinds, _θu_from_active, Vt_raw, :louis, vcov,
+            pseudo_inverse, n_draws, level, rng, _method_symbol(source_method),
+            merge((; approximation_method = :louis), meat_diag), weighted
         )
     end
 

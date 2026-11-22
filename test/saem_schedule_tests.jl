@@ -9,7 +9,7 @@ using Turing
 
 @testset "SA schedule: _saem_gamma_schedule robbins_monro" begin
     # maxiters=2, sa_burnin_iters=0, t0=5 (t0 > maxiters, so only stabilization phase runs)
-    opts = NoLimits.SAEM(; sa_burnin_iters = 0, t0 = 5, kappa = 0.65, maxiters = 2).saem
+    opts = NoLimits.SAEM(; louis_draws = 50, sa_burnin_iters = 0, t0 = 5, kappa = 0.65, maxiters = 2).saem
 
     @test opts.sa_schedule === :robbins_monro
 
@@ -20,6 +20,7 @@ end
 
 @testset "SA schedule: _saem_gamma_schedule two_phase kappa=-1" begin
     opts = NoLimits.SAEM(;
+        louis_draws = 50,
         sa_schedule = :two_phase,
         sa_burnin_iters = 3,
         sa_phase1_iters = 5,
@@ -43,6 +44,7 @@ end
 
 @testset "SA schedule: _saem_gamma_schedule two_phase kappa=-2" begin
     opts = NoLimits.SAEM(;
+        louis_draws = 50,
         sa_schedule = :two_phase,
         sa_burnin_iters = 0,
         sa_phase1_iters = 2,
@@ -57,7 +59,7 @@ end
 
 @testset "SA schedule: _saem_gamma_schedule custom" begin
     fn = (iter, _opts) -> iter == 1 ? 1.0 : 0.5
-    opts = NoLimits.SAEM(; sa_schedule = :custom, sa_schedule_fn = fn).saem
+    opts = NoLimits.SAEM(; louis_draws = 50, sa_schedule = :custom, sa_schedule_fn = fn).saem
 
     @test NoLimits._saem_gamma_schedule(1, opts) == 1.0
     @test NoLimits._saem_gamma_schedule(2, opts) == 0.5
@@ -66,7 +68,7 @@ end
 
 @testset "SA schedule: _saem_schedule_phase labels" begin
     # Default: sa_burnin_iters=6, t0=maxiters÷2 — burn-in, stabilization, then decay
-    opts_rm = NoLimits.SAEM().saem
+    opts_rm = NoLimits.SAEM(; louis_draws = 50).saem
     @test opts_rm.t0 == opts_rm.maxiters ÷ 2
     @test opts_rm.sa_burnin_iters == 6
     @test NoLimits._saem_schedule_phase(1, opts_rm) === :burnin
@@ -79,14 +81,14 @@ end
         opts_rm.sa_burnin_iters + opts_rm.t0 + 1, opts_rm
     ) === :robbins_monro_decay
 
-    opts_rm_short = NoLimits.SAEM(; maxiters = 2, sa_burnin_iters = 0).saem
+    opts_rm_short = NoLimits.SAEM(; louis_draws = 50, maxiters = 2, sa_burnin_iters = 0).saem
     @test opts_rm_short.t0 == 1
     @test NoLimits._saem_schedule_phase(opts_rm_short.t0, opts_rm_short) === :robbins_monro
     @test NoLimits._saem_schedule_phase(opts_rm_short.t0 + 1, opts_rm_short) ===
         :robbins_monro_decay
 
     # With burn-in
-    opts_rm_bi = NoLimits.SAEM(; sa_burnin_iters = 3, t0 = 5).saem
+    opts_rm_bi = NoLimits.SAEM(; louis_draws = 50, sa_burnin_iters = 3, t0 = 5).saem
     @test NoLimits._saem_schedule_phase(1, opts_rm_bi) === :burnin
     @test NoLimits._saem_schedule_phase(3, opts_rm_bi) === :burnin
     @test NoLimits._saem_schedule_phase(4, opts_rm_bi) === :robbins_monro
@@ -94,6 +96,7 @@ end
     @test NoLimits._saem_schedule_phase(9, opts_rm_bi) === :robbins_monro_decay
 
     opts_tp = NoLimits.SAEM(;
+        louis_draws = 50,
         sa_schedule = :two_phase,
         sa_burnin_iters = 2, sa_phase1_iters = 3
     ).saem
@@ -103,28 +106,29 @@ end
     @test NoLimits._saem_schedule_phase(5, opts_tp) === :phase1
     @test NoLimits._saem_schedule_phase(6, opts_tp) === :phase2
 
-    opts_cu = NoLimits.SAEM(; sa_schedule = :custom, sa_schedule_fn = (i, _) -> 1.0).saem
+    opts_cu = NoLimits.SAEM(; louis_draws = 50, sa_schedule = :custom, sa_schedule_fn = (i, _) -> 1.0).saem
     @test NoLimits._saem_schedule_phase(1, opts_cu) === :custom
 end
 
 @testset "SA schedule: _saem_past_stabilization_phase" begin
-    opts_rm = NoLimits.SAEM(; sa_burnin_iters = 0, t0 = 5).saem
+    opts_rm = NoLimits.SAEM(; louis_draws = 50, sa_burnin_iters = 0, t0 = 5).saem
     @test !NoLimits._saem_past_stabilization_phase(5, opts_rm)
     @test NoLimits._saem_past_stabilization_phase(6, opts_rm)
 
     # Burn-in shifts the stabilization boundary
-    opts_rm_bi = NoLimits.SAEM(; sa_burnin_iters = 3, t0 = 5).saem
+    opts_rm_bi = NoLimits.SAEM(; louis_draws = 50, sa_burnin_iters = 3, t0 = 5).saem
     @test !NoLimits._saem_past_stabilization_phase(8, opts_rm_bi)
     @test NoLimits._saem_past_stabilization_phase(9, opts_rm_bi)
 
     opts_tp = NoLimits.SAEM(;
+        louis_draws = 50,
         sa_schedule = :two_phase,
         sa_burnin_iters = 2, sa_phase1_iters = 3
     ).saem
     @test !NoLimits._saem_past_stabilization_phase(5, opts_tp)  # end of phase1
     @test NoLimits._saem_past_stabilization_phase(6, opts_tp)  # first of phase2
 
-    opts_cu = NoLimits.SAEM(; sa_schedule = :custom, sa_schedule_fn = (i, _) -> 1.0).saem
+    opts_cu = NoLimits.SAEM(; louis_draws = 50, sa_schedule = :custom, sa_schedule_fn = (i, _) -> 1.0).saem
     @test !NoLimits._saem_past_stabilization_phase(1, opts_cu)
     @test NoLimits._saem_past_stabilization_phase(2, opts_cu)
 end
@@ -181,6 +185,7 @@ _sched_dm() = fx_tiny_re_dm()
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2, sa_burnin_iters = 0, t0 = 1, kappa = 0.65,
@@ -203,6 +208,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2,
@@ -227,6 +233,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2,
@@ -244,7 +251,7 @@ end
     dm = _sched_dm()
     k, n = 3, 10
     # The default :robbins_monro schedule with burn-in: γ = 0 in iterations 1:k and n.
-    rm_opts = NoLimits.SAEM(; maxiters = n, sa_burnin_iters = k, t0 = 3).saem
+    rm_opts = NoLimits.SAEM(; louis_draws = 50, maxiters = n, sa_burnin_iters = k, t0 = 3).saem
     γs = [NoLimits._saem_gamma_schedule(i, rm_opts) for i in 1:n]
     @test all(iszero, γs[1:k]) && iszero(γs[n]) && all(>(0), γs[(k + 1):(n - 1)])
 
@@ -254,6 +261,7 @@ end
     calls = zeros(Int, n)
     eo = θu -> (calls[cur[]] += 1; zero(eltype(θu)))
     saem(m) = NoLimits.SAEM(;
+        louis_draws = 50,
         sampler = MH(),
         turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
         maxiters = m, sa_schedule = :custom,

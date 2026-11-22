@@ -957,12 +957,12 @@ end
 # Invalid iteration/chain/sample counts used to construct fine and fail deep inside the
 # fit (BoundsError, 0/0, or a silently substituted default) — reject them up front (#226).
 @testset "estimator options reject non-positive counts" begin
-    @test_throws ErrorException NoLimits.SAEM(; maxiters = 0)
-    @test_throws ErrorException NoLimits.SAEM(; n_chains = 0)
-    @test_throws ErrorException NoLimits.SAEM(; kappa = 0.0)
-    @test_throws ErrorException NoLimits.SAEM(; consecutive_params = 0)
-    @test_throws ErrorException NoLimits.SAEM(; t0 = -1)
-    @test_throws ErrorException NoLimits.SAEM(; mcmc_steps = 0)
+    @test_throws ErrorException NoLimits.SAEM(; louis_draws = 50, maxiters = 0)
+    @test_throws ErrorException NoLimits.SAEM(; louis_draws = 50, n_chains = 0)
+    @test_throws ErrorException NoLimits.SAEM(; louis_draws = 50, kappa = 0.0)
+    @test_throws ErrorException NoLimits.SAEM(; louis_draws = 50, consecutive_params = 0)
+    @test_throws ErrorException NoLimits.SAEM(; louis_draws = 50, t0 = -1)
+    @test_throws ErrorException NoLimits.SAEM(; louis_draws = 50, mcmc_steps = 0)
     @test_throws ErrorException NoLimits.MCEM(; maxiters = 0)
     @test_throws ErrorException NoLimits.MCEM(; consecutive_params = 0)
     @test_throws ErrorException NoLimits.MCEM(; sample_schedule = 0)
@@ -974,33 +974,33 @@ end
     @test_throws ArgumentError NoLimits.GHQuadrature(; level = 0)
     @test_throws ArgumentError NoLimits.GHQuadrature(; level = (η = 0,))
     # Valid settings still construct.
-    @test NoLimits.SAEM(; maxiters = 3) isa NoLimits.SAEM
+    @test NoLimits.SAEM(; louis_draws = 50, maxiters = 3) isa NoLimits.SAEM
     @test NoLimits.MCEM(; sample_schedule = [5, 7]) isa NoLimits.MCEM
 end
 
 # Misspelled symbols used to silently select a different algorithm, and out-of-domain
 # schedule/annealing values silently changed the estimator (#229).
 @testset "estimator options reject invalid schedule settings" begin
-    @test_throws ErrorException NoLimits.SAEM(; sa_schedule = :bad)
-    @test_throws ErrorException NoLimits.SAEM(; sa_schedule = :custom)
-    @test_throws ErrorException NoLimits.SAEM(; sa_phase2_kappa = NaN)
-    @test_throws ErrorException NoLimits.SAEM(; sa_phase2_kappa = 1.0)
-    @test_throws ErrorException NoLimits.SAEM(; sa_anneal_schedule = :exponetial)
-    @test_throws ErrorException NoLimits.SAEM(; sa_anneal_alpha = 2.0)
-    @test_throws ErrorException NoLimits.SAEM(; sa_anneal_iters = -5)
-    @test_throws ErrorException NoLimits.SAEM(; small_n_chain_target = 0)
-    @test_throws ErrorException NoLimits.SAEM(; anneal_min_sd = 0.0)
-    @test_throws ErrorException NoLimits.SAEM(; var_lb_value = 0.0)
+    @test_throws ErrorException NoLimits.SAEM(; louis_draws = 50, sa_schedule = :bad)
+    @test_throws ErrorException NoLimits.SAEM(; louis_draws = 50, sa_schedule = :custom)
+    @test_throws ErrorException NoLimits.SAEM(; louis_draws = 50, sa_phase2_kappa = NaN)
+    @test_throws ErrorException NoLimits.SAEM(; louis_draws = 50, sa_phase2_kappa = 1.0)
+    @test_throws ErrorException NoLimits.SAEM(; louis_draws = 50, sa_anneal_schedule = :exponetial)
+    @test_throws ErrorException NoLimits.SAEM(; louis_draws = 50, sa_anneal_alpha = 2.0)
+    @test_throws ErrorException NoLimits.SAEM(; louis_draws = 50, sa_anneal_iters = -5)
+    @test_throws ErrorException NoLimits.SAEM(; louis_draws = 50, small_n_chain_target = 0)
+    @test_throws ErrorException NoLimits.SAEM(; louis_draws = 50, anneal_min_sd = 0.0)
+    @test_throws ErrorException NoLimits.SAEM(; louis_draws = 50, var_lb_value = 0.0)
     @test_throws ErrorException NoLimits.MCMC(; turing_kwargs = (n_adapt = -1,))
     @test_throws ErrorException NoLimits.MCMC(; turing_kwargs = (n_samples = 0,))
     @test_throws ErrorException NoLimits.Laplace(; theta_tol = -1.0)
     # sa_anneal_alpha = 0 stays valid: it is the documented way to disable annealing.
-    @test NoLimits.SAEM(; sa_anneal_alpha = 0.0) isa NoLimits.SAEM
+    @test NoLimits.SAEM(; louis_draws = 50, sa_anneal_alpha = 0.0) isa NoLimits.SAEM
 
     # A custom γ schedule is checked where it is used, not just at construction.
-    bad = NoLimits.SAEM(; sa_schedule = :custom, sa_schedule_fn = (i, o) -> 2.0).saem
+    bad = NoLimits.SAEM(; louis_draws = 50, sa_schedule = :custom, sa_schedule_fn = (i, o) -> 2.0).saem
     @test_throws ErrorException NoLimits._saem_gamma_schedule(1, bad)
-    good = NoLimits.SAEM(; sa_schedule = :custom, sa_schedule_fn = (i, o) -> 0.25).saem
+    good = NoLimits.SAEM(; louis_draws = 50, sa_schedule = :custom, sa_schedule_fn = (i, o) -> 0.25).saem
     @test NoLimits._saem_gamma_schedule(1, good) == 0.25
 end
 
@@ -1012,11 +1012,13 @@ end
     @test NoLimits._as_symbol(nothing) === nothing
 
     s_str = NoLimits.SAEM(;
+        louis_draws = 50,
         sa_schedule = "two_phase", sa_anneal_schedule = "linear",
         builtin_stats = "auto", resid_var_param = "σ",
         ebe_multistart_sampling = "random", ebe_rescue_multistart_sampling = "random"
     ).saem
     s_sym = NoLimits.SAEM(;
+        louis_draws = 50,
         sa_schedule = :two_phase, sa_anneal_schedule = :linear,
         builtin_stats = :auto, resid_var_param = :σ,
         ebe_multistart_sampling = :random, ebe_rescue_multistart_sampling = :random
@@ -1027,8 +1029,8 @@ end
     @test s_str.resid_var_param === s_sym.resid_var_param
     @test s_str.ebe_multistart_sampling === s_sym.ebe_multistart_sampling
     @test s_str.ebe_rescue.sampling === s_sym.ebe_rescue.sampling
-    @test_throws ErrorException NoLimits.SAEM(; sa_schedule = "bad")
-    @test_throws ErrorException NoLimits.SAEM(; sa_anneal_schedule = "exponetial")
+    @test_throws ErrorException NoLimits.SAEM(; louis_draws = 50, sa_schedule = "bad")
+    @test_throws ErrorException NoLimits.SAEM(; louis_draws = 50, sa_anneal_schedule = "exponetial")
 
     l_str = NoLimits.Laplace(; multistart_sampling = "random", nan_recovery = "error")
     l_sym = NoLimits.Laplace(; multistart_sampling = :random, nan_recovery = :error)
@@ -1111,11 +1113,13 @@ end
     @test_throws ArgumentError NoLimits.GHQuadrature(; level = Dict("η" => 0))
 
     s_d = NoLimits.SAEM(;
+        louis_draws = 50,
         optim_kwargs = Dict("iterations" => 4), turing_kwargs = Dict("n_samples" => 2),
         ebe_optim_kwargs = Dict("maxiters" => 2), re_cov_params = Dict("η" => "ω"),
         sa_anneal_targets = Dict("ω" => 0.5)
     ).saem
     s_nt = NoLimits.SAEM(;
+        louis_draws = 50,
         optim_kwargs = (; iterations = 4), turing_kwargs = (; n_samples = 2),
         ebe_optim_kwargs = (; maxiters = 2), re_cov_params = (; η = :ω),
         sa_anneal_targets = (; ω = 0.5)
@@ -1124,7 +1128,7 @@ end
     @test s_d.ebe_optim_kwargs == s_nt.ebe_optim_kwargs
     @test s_d.re_cov_params == s_nt.re_cov_params   # values name a parameter: :ω, not "ω"
     @test s_d.sa_anneal_targets == s_nt.sa_anneal_targets
-    @test_throws ErrorException NoLimits.SAEM(; turing_kwargs = Dict("n_samples" => 0))
+    @test_throws ErrorException NoLimits.SAEM(; louis_draws = 50, turing_kwargs = Dict("n_samples" => 0))
 
     m_d = NoLimits.MCEM(;
         optim_kwargs = Dict("iterations" => 4), turing_kwargs = Dict("n_samples" => 2),

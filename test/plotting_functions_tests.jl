@@ -983,6 +983,7 @@ end
     dm_re = fx_re_dm()
     saem = fit_model(
         dm_re, NoLimits.SAEM(;
+            louis_draws = 50,
             maxiters = 4, sa_burnin_iters = 1, store_diagnostics = true, diagnostics_every = 2
         ); rng = Random.Xoshiro(1)
     )

@@ -113,6 +113,7 @@ const _HMM_RE_SMOKE_METHODS = Dict(
         sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false)
     ),
     :SAEM => () -> NoLimits.SAEM(;
+        louis_draws = 50,
         sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
         mcmc_steps = 1, q_store_max = 2, maxiters = 2,
         progress = false, builtin_stats = :auto
