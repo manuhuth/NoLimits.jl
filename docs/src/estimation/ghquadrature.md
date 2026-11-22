@@ -163,7 +163,7 @@ res = fit_model(dm, NoLimits.GHQuadrature(level=[1, 2]))
 | Inner EB | `inner_optimizer`, `inner_kwargs`, `inner_adtype`, `inner_grad_tol`, `multistart_*` | Inner optimizer for the EB modes. It runs on every objective evaluation (the modes center the adaptive rule, or warm-start the reference-space mode search for bounded-support random effects) and once more, cold-started, at the optimum for `get_random_effects`. |
 | Bounds | `lb`, `ub`, `ignore_model_bounds` | Box bounds on transformed fixed-effect parameters. |
 
-The default outer optimizer is `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep = 1.0))`. The default inner optimizer is [`NewtonInner(x_abstol = 1e-10)`](@ref NewtonInner), as for `Laplace`; see the [Laplace](laplace.md) page for the inner options.
+The default outer optimizer is `OptimizationOptimJL.LBFGS(m = 20, linesearch = LineSearches.BackTracking(maxstep = 1.0))`. The default inner optimizer is [`NewtonInner(x_abstol = 1e-10)`](@ref NewtonInner), as for `Laplace`; see the [Laplace](laplace.md) page for the inner options.
 
 !!! note "Inner optimization during fitting"
     Like `Laplace`, `GHQuadrature` solves the EB modes on every objective evaluation; they center the adaptive rule for random effects supported on the whole real line, and warm-start the reference-space mode search for bounded-support random effects. The modes are solved once more, cold-started, at the optimum for `get_random_effects`.

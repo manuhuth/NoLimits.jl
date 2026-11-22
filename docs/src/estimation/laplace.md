@@ -57,7 +57,7 @@ The `Laplace` constructor exposes options that control the outer fixed-effects o
 
 | Keyword | Default | What it controls |
 | --- | --- | --- |
-| `optimizer` | `LBFGS(linesearch = BackTracking(maxstep = 1.0))` | outer optimizer over fixed effects |
+| `optimizer` | `LBFGS(m = 20, linesearch = BackTracking(maxstep = 1.0))` | outer optimizer over fixed effects |
 | `optim_kwargs` | `(; maxiters = 1000)`, plus `reltol = 1e-12` for an Optim.jl optimizer | outer optimizer settings |
 | `adtype` | `AutoForwardDiff()` | AD backend for the outer gradient |
 | `inner_optimizer` | `NewtonInner(x_abstol = 1e-10)` | optimizer for the per-batch EB modes |
@@ -160,7 +160,7 @@ Practical implications:
 
 - Outer optimizer (`optimizer`, `optim_kwargs`, `adtype`)
   - Runs once at the top level.
-  - Defaults to the local-gradient `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0))`. Derivative-free methods (e.g. `NLopt.LN_BOBYQA()`) and global methods are also supported.
+  - Defaults to the local-gradient `OptimizationOptimJL.LBFGS(m = 20, linesearch = LineSearches.BackTracking(maxstep = 1.0))`. Derivative-free methods (e.g. `NLopt.LN_BOBYQA()`) and global methods are also supported.
   - The line-search step cap matters: an uncapped unit first step can overshoot into the region where the marginal is not finite. Keep `maxstep` if you substitute another line search.
   - Note: if you switch to an NLopt optimizer, it interprets `optim_kwargs.maxiters` as a cap on the number of function *evaluations* (`maxeval`), not outer iterations; reaching it yields `retcode = MaxIters` (reported as not converged).
   - If using BlackBoxOptim (`OptimizationBBO.*`), finite bounds are required.
@@ -173,7 +173,7 @@ Practical implications:
 
 Repository-verified behavior:
 
-- Default outer optimizer is `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0))`; the default inner optimizer is `NewtonInner(x_abstol = 1e-10)`. The outer problem is preconditioned by default (`precondition=true`), so the optimizer works in a scaled offset that starts at zero; see the [`Laplace`](@ref) API entry.
+- Default outer optimizer is `OptimizationOptimJL.LBFGS(m = 20, linesearch = LineSearches.BackTracking(maxstep = 1.0))`; the default inner optimizer is `NewtonInner(x_abstol = 1e-10)`. The outer problem is preconditioned by default (`precondition=true`), so the optimizer works in a scaled offset that starts at zero; see the [`Laplace`](@ref) API entry.
 - Outer BlackBoxOptim is supported with finite bounds (`lb`, `ub`); without bounds, an error is raised.
 
 Examples:

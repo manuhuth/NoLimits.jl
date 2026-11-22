@@ -2990,7 +2990,7 @@ random effects.
 
 # Keyword Arguments
 - `optimizer`: outer Optimization.jl optimizer. Defaults to
-  `OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0))`, which uses
+  `OptimizationOptimJL.LBFGS(m = 20, linesearch = LineSearches.BackTracking(maxstep = 1.0))`, which uses
   the analytic marginal gradient. For mini-batching wrap the method in [`MiniBatch`](@ref).
 
   **The `maxstep` cap is load-bearing, not decoration.** The gradient is exact, but its
