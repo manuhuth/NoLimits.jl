@@ -68,7 +68,7 @@ end
 
 @testset "SA schedule: _saem_schedule_phase labels" begin
     # Default: sa_burnin_iters=6, t0=maxiters÷2 — burn-in, stabilization, then decay
-    opts_rm = NoLimits.SAEM(; louis_draws = 50, louis_draws = 50).saem
+    opts_rm = NoLimits.SAEM(; louis_draws = 50).saem
     @test opts_rm.t0 == opts_rm.maxiters ÷ 2
     @test opts_rm.sa_burnin_iters == 6
     @test NoLimits._saem_schedule_phase(1, opts_rm) === :burnin

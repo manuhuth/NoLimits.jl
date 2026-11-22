@@ -137,7 +137,7 @@ end
 end
 
 @testset "SA anneal: SAEMOptions defaults" begin
-    opts = NoLimits.SAEM(; louis_draws = 50, louis_draws = 50).saem
+    opts = NoLimits.SAEM(; louis_draws = 50).saem
     @test isempty(keys(opts.sa_anneal_targets))
     @test opts.sa_anneal_schedule == :exponential
     @test opts.sa_anneal_iters == opts.t0   # defaults to the resolved t0

@@ -782,7 +782,7 @@ end
     # Population form is bit-identical to the fit's own current-statistics kernel.
     _, bis, cc = NoLimits.build_re_batch_infos(dm, NamedTuple())
     llc = NoLimits.build_ll_cache(dm; serialization = NoLimits.EnsembleSerial(), force_saveat = true)
-    cfg = NoLimits._saem_resolve_closed_form_config(dm, NoLimits.SAEM(; louis_draws = 50, louis_draws = 50).saem)
+    cfg = NoLimits._saem_resolve_closed_form_config(dm, NoLimits.SAEM(; louis_draws = 50).saem)
     b_chains = [[NoLimits.get_draws(draws[bi])[:, c] for c in 1:size(NoLimits.get_draws(draws[bi]), 2)] for bi in 1:nb]
     n_chains = size(NoLimits.get_draws(draws[1]), 2)
     ref = NoLimits._saem_builtin_collect_current_stats(
@@ -829,7 +829,7 @@ end
     @test !haskey(updc, :σ) && haskey(updc, :ω)
 
     # Round trip: federated { E-step -> suff-stats -> closed-form (σ,ω) + LBFGS q1 (a) }
-    # reproduces fit_model(dm, SAEM(; louis_draws = 50, louis_draws = 50)) under a fixed rng.
+    # reproduces fit_model(dm, SAEM(; louis_draws = 50)) under a fixed rng.
     tr = NoLimits.get_transform(fe)
     itr = NoLimits.get_inverse_transform(fe)
     mstep_a = function (θ, draws)
@@ -865,9 +865,9 @@ end
         return rebuild(sol.u)
     end
 
-    res = fit_model(dm, NoLimits.SAEM(; louis_draws = 50, louis_draws = 50); rng = MersenneTwister(7))
+    res = fit_model(dm, NoLimits.SAEM(; louis_draws = 50); rng = MersenneTwister(7))
     p_ref = NoLimits.get_params(res; scale = :untransformed)
-    saem_opts = NoLimits.SAEM(; louis_draws = 50, louis_draws = 50).saem
+    saem_opts = NoLimits.SAEM(; louis_draws = 50).saem
     θ_rt = θ
     state = nothing
     cfs = nothing

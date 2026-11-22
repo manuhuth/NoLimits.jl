@@ -103,7 +103,7 @@ const _SAEM_SEP_DM_MISSING = DataModel(
 )
 
 @testset "SAEM default sampler" begin
-    method = NoLimits.SAEM(; louis_draws = 50, louis_draws = 50)
+    method = NoLimits.SAEM(; louis_draws = 50)
     @test method.saem.sampler isa SaemixMH
     @test method.saem.ebe_multistart_n == 50
     @test method.saem.ebe_multistart_k == 1

@@ -115,7 +115,7 @@ end
 end
 
 @testset "SAEMOptions: auto_var_lb defaults" begin
-    opts = NoLimits.SAEM(; louis_draws = 50, louis_draws = 50)
+    opts = NoLimits.SAEM(; louis_draws = 50)
     @test opts.saem.auto_var_lb == true
     @test opts.saem.var_lb_value == 1.0e-5
 end
@@ -590,7 +590,7 @@ end
 end
 
 @testset "Multi-chain: SAEMOptions n_chains defaults" begin
-    opts = NoLimits.SAEM(; louis_draws = 50, louis_draws = 50).saem
+    opts = NoLimits.SAEM(; louis_draws = 50).saem
     @test opts.n_chains == 1
     @test opts.auto_small_n_chains == true
     @test opts.small_n_chain_target == 50

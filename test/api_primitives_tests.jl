@@ -737,7 +737,7 @@ end
         end
 
         # sampling-based methods have no deterministic θ-objective, and the scale is checked
-        @test_throws ErrorException og(NoLimits.SAEM(; louis_draws = 50, louis_draws = 50), dm, θ0)
+        @test_throws ErrorException og(NoLimits.SAEM(; louis_draws = 50), dm, θ0)
         @test_throws ErrorException og(NoLimits.Laplace(), dm, θ0; scale = :nonsense)
         @test_throws ErrorException og(NoLimits.GHQuadrature(), dm, θ0; scale = :nonsense)
 
