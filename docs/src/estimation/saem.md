@@ -435,7 +435,7 @@ Both modes follow the stochastic approximation of the information of [kuhn2005ma
 
 The Louis computations draw no random numbers from the fit's streams, so the estimates are bitwise identical for every value of `louis`. No information is stored under `MiniBatch` or `anneal_to_fixed`.
 
-The estimate subtracts the posterior variance of the score from the complete-data information. When the random effects are strongly shrunk, the two are close and the difference carries relative Monte Carlo error; increase `louis_draws` if repeated fits give visibly different standard errors.
+A fixed effect that enters the model only as an additive shift of a normal random effect (`a + η`, or `a * exp(η)` with `a` on the log scale, the pairs that SAEM also uses for centering) is handled in the shifted latent `φ = η + a`, which carries the same information with far smaller Monte Carlo error; for other parameters the estimate subtracts the posterior variance of the score from the complete-data information. When the random effects are strongly shrunk, the two are close and the difference carries relative Monte Carlo error; increase `louis_draws` if repeated fits give visibly different standard errors.
 
 ## Advanced usage
 

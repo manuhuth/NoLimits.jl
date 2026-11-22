@@ -717,7 +717,9 @@ end
         return -sum(logpdf(MvNormal(fill(θu.a, m), Σ), y) for y in ys)
     end
 
-    # Fixed θ, exact iid posterior draws (4000 per subject): Monte Carlo error ≈ 2%.
+    # Fixed θ, exact iid posterior draws (4000 per subject). The model is additive (y = a + η),
+    # so a is differentiated in the shifted latent φ = η + a, which removes most MC error.
+    @test NoLimits._louis_shift_pairs(dm, [:a, :σ, :ω]) == [(fe = :a, re = :η, k = 0, mode = :add)]
     _, bis, cc = NoLimits.build_re_batch_infos(dm, NamedTuple())
     lmap = NoLimits._LouisThetaMap(getaxes(θt), θt, getaxes(θt), [:a, :σ, :ω], Ti)
     v = 1 / (m / θ.σ^2 + 1 / θ.ω^2)
@@ -731,7 +733,7 @@ end
     NoLimits._louis_average!(st, dm, bis, x, bi -> eachcol(draws[bi]), _ -> nothing, ser)
     A, _ = NoLimits._louis_matrices(st.S, st.Δw, st.Δu, dm, bis)
     H = ForwardDiff.hessian(negll, x)
-    @test maximum(abs.(A .- H) ./ sqrt.(diag(H) * diag(H)')) < 0.08
+    @test maximum(abs.(A .- H) ./ sqrt.(diag(H) * diag(H)')) < 0.02
 
     # Fits with default settings: Louis SEs vs exact-marginal Wald SEs at the same estimate.
     se_exact(r) = sqrt.(diag(inv(ForwardDiff.hessian(negll, collect(Tf(get_params(r; scale = :untransformed)))))))
@@ -771,6 +773,9 @@ end
     @test NoLimits.get_notes(r_fixω).louis.status == :ok
     @test get_uq_diagnostics(compute_uq(r_fixω; serialization = ser)).approximation_method == :louis
     @test_throws ArgumentError NoLimits.SAEM(; louis = true)
+    # integer tolerances are accepted ("set both to 0 to disable early stopping")
+    @test NoLimits.SAEM(; rtol_theta = 0, atol_theta = 0, rtol_Q = 0, atol_Q = 0).saem.rtol_theta === 0.0
+    @test NoLimits.MCEM(; rtol_theta = 0, atol_theta = 0, rtol_Q = 0, atol_Q = 0).em.rtol_theta === 0.0
     @test_throws ArgumentError NoLimits.MCEM(; louis = :exact)
     @test_throws ArgumentError NoLimits.SAEM(; louis_draws = 0)
 end

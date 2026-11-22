@@ -1709,14 +1709,30 @@ end
         θu(x) = NoLimits.get_inverse_transform(fe)(ComponentArray(x, getaxes(θt)))
         _, bis, cc = NoLimits.build_re_batch_infos(d, NamedTuple())
         ds, x, p = NoLimits._sampling_dm(d), collect(θt), length(θt)
+        # additive FE/RE pairs are differentiated in the latent φ = η + a (Jacobian 1)
+        pairs = NoLimits._louis_shift_pairs(d, collect(propertynames(θt)))
+        re_names = NoLimits.get_re_names(NoLimits.get_random(model))
         A, B = zeros(p, p), zeros(p, p)
         for (bi, info) in enumerate(bis)
+            sh = [(NoLimits._cs_batch_indices(info, re_names, q.re, q.k), q.fe, q.mode === :mul) for q in pairs]
+            shift(θn, fe, mul) = mul ? log(getproperty(θn, fe)) : getproperty(θn, fe)
+            function eta(φ, θn)
+                v = eltype(θn).(φ)
+                for (ix, fe, mul) in sh
+                    v[ix] .-= shift(θn, fe, mul)
+                end
+                return v
+            end
             D = NoLimits.get_draws(draws0[bi])
-            lw(b) = x -> complete_data_loglikelihood(d, info, θu(x), b; const_cache = cc)
-            lu(b) = x -> complete_data_loglikelihood(ds, info, θu(x), b; const_cache = cc)
-            gw = [ForwardDiff.gradient(lw(D[:, s]), x) for s in axes(D, 2)]
-            gu = [ForwardDiff.gradient(lu(D[:, s]), x) for s in axes(D, 2)]
-            Hw = [ForwardDiff.hessian(lw(D[:, s]), x) for s in axes(D, 2)]
+            Φ = copy(D)
+            for (ix, fe, mul) in sh
+                Φ[ix, :] .+= shift(θ, fe, mul)
+            end
+            lw(φ) = x -> complete_data_loglikelihood(d, info, θu(x), eta(φ, θu(x)); const_cache = cc)
+            lu(φ) = x -> complete_data_loglikelihood(ds, info, θu(x), eta(φ, θu(x)); const_cache = cc)
+            gw = [ForwardDiff.gradient(lw(Φ[:, s]), x) for s in axes(Φ, 2)]
+            gu = [ForwardDiff.gradient(lu(Φ[:, s]), x) for s in axes(Φ, 2)]
+            Hw = [ForwardDiff.hessian(lw(Φ[:, s]), x) for s in axes(Φ, 2)]
             Δw, Δu = sum(gw) / length(gw), sum(gu) / length(gu)
             cov_wu = sum(gw[s] * gu[s]' for s in eachindex(gw)) / length(gw) - Δw * Δu'
             A .+= -sum(Hw) / length(Hw) .- cov_wu
@@ -1724,6 +1740,7 @@ end
         end
         return A, B
     end
+    @test !isempty(NoLimits._louis_shift_pairs(dm0, [:a, :ω_e, :ω_s, :σ]))   # a ↔ η_e is shifted
     for d in (dm0, dmr)
         (A, B), (A0, B0) = louis_AB(d), louis_oracle(d)
         @test A ≈ A0 rtol = 1.0e-10

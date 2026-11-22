@@ -32,11 +32,37 @@ struct _LouisPartLogf{F, D, C, L, AX}
     u::Vector{Float64}
     pos::Vector{Int}
     axs::AX
+    shifts::Vector{Tuple{Vector{Int}, Int, Bool}}
 end
 function (f::_LouisPartLogf)(z)
     uu = eltype(z).(f.u)
     uu[f.pos] .= z
-    return f.fun(f.dm, f.info, ComponentArray(uu, f.axs), f.b, f.const_cache, f.cache[])
+    isempty(f.shifts) &&
+        return f.fun(f.dm, f.info, ComponentArray(uu, f.axs), f.b, f.const_cache, f.cache[])
+    # b holds φ = η + s(θ̂); evaluate at η = φ - s(θ)
+    bb = eltype(z).(f.b)
+    for (bidx, upos, mul) in f.shifts
+        s = mul ? log(uu[upos]) : uu[upos]
+        bb[bidx] .-= s
+    end
+    return f.fun(f.dm, f.info, ComponentArray(uu, f.axs), bb, f.const_cache, f.cache[])
+end
+
+# Additive fixed-effect/RE pairs (the SAEM centering pairs, #421: a + η, or a * exp(η) with
+# a on the log scale) enter the model only through a + η. Louis' integrand is then formed in
+# the latent φ = η + s(a) (Jacobian 1, same information): a moves from the observation term,
+# where the complete-data information is large and nearly cancels against the score variance,
+# into the RE prior, so the Monte Carlo error of the estimate drops sharply.
+function _louis_shift_pairs(dm::DataModel, names::Vector{Symbol})
+    pairs = _saem_detect_centering_pairs(dm, names)
+    return [p for p in pairs if p.mode in (:add, :mul)]
+end
+
+function _louis_batch_shifts(info::REBatchInfo, re_names, pairs, upos_of)
+    get_n_b(info) == 0 && return Tuple{Vector{Int}, Int, Bool}[]
+    return Tuple{Vector{Int}, Int, Bool}[
+        (_cs_batch_indices(info, re_names, p.re, p.k), upos_of[p.fe], p.mode === :mul) for p in pairs
+    ]
 end
 
 # Per-batch functors, ForwardDiff configs and buffers (one set per batch, so configs are
@@ -73,7 +99,10 @@ function _louis_positions(u::ComponentArray, names)
     return Int[Int(i) for n in names for i in vec(collect(getproperty(ix, n)))]
 end
 
-function _louis_work(dm::DataModel, batch_infos, map::_LouisThetaMap, const_cache, ll_cache, x::Vector{Float64})
+function _louis_work(
+        dm::DataModel, batch_infos, map::_LouisThetaMap, const_cache, ll_cache, x::Vector{Float64};
+        shift::Bool = true
+    )
     c1 = ll_cache isa Vector ? ll_cache[1] : ll_cache
     nb, p = length(batch_infos), length(x)
     model = get_model(dm)
@@ -84,20 +113,29 @@ function _louis_work(dm::DataModel, batch_infos, map::_LouisThetaMap, const_cach
     p1 = _partition_q1_q2_names(model, names).q1
     posF = _louis_positions(θu, names)
     loc(ns) = Int[findfirst(==(k), posF) for k in _louis_positions(θu, ns)]
-    loc_re, loc_obs = loc([n for n in names if n in re_syms]), loc(p1)
+    pairs = shift ? _louis_shift_pairs(dm, names) : NamedTuple[]
+    shifted = Set{Symbol}(p.fe for p in pairs)
+    loc_re, loc_obs = loc([n for n in names if n in re_syms || n in shifted]), loc(p1)
+    upos_of = Dict{Symbol, Int}(p.fe => only(_louis_positions(θu, [p.fe])) for p in pairs)
+    re_names = get_re_names(get_random(model))
+    shifts = [_louis_batch_shifts(info, re_names, pairs, upos_of) for info in batch_infos]
     q = length(posF)
-    mk(fun, d, info, l) = _LouisPartLogf(fun, d, info, const_cache, Ref(c1), zeros(get_n_b(info)), copy(u), posF[l], axs)
+    mk(fun, d, bi, l) = _LouisPartLogf(
+        fun, d, batch_infos[bi], const_cache, Ref(c1), zeros(get_n_b(batch_infos[bi])),
+        copy(u), posF[l], axs, shifts[bi]
+    )
+    nbi = eachindex(batch_infos)
     zr, zo = zeros(length(loc_re)), zeros(length(loc_obs))
     has_re = !isempty(loc_re)
-    fr = has_re ? [mk(_re_logpdf_batch, dm, info, loc_re) for info in batch_infos] : nothing
+    fr = has_re ? [mk(_re_logpdf_batch, dm, bi, loc_re) for bi in nbi] : nothing
     rres = has_re ? [ForwardDiff.DiffResults.HessianResult(zr) for _ in 1:nb] : nothing
     rcfg = has_re ? [ForwardDiff.HessianConfig(fr[bi], rres[bi], zr) for bi in 1:nb] : nothing
     has_obs = !isempty(loc_obs)
-    fo = has_obs ? [mk(_mcem_obs_logf_batch, dm, info, loc_obs) for info in batch_infos] : nothing
+    fo = has_obs ? [mk(_mcem_obs_logf_batch, dm, bi, loc_obs) for bi in nbi] : nothing
     ores = has_obs ? [ForwardDiff.DiffResults.HessianResult(zo) for _ in 1:nb] : nothing
     ocfg = has_obs ? [ForwardDiff.HessianConfig(fo[bi], ores[bi], zo) for bi in 1:nb] : nothing
     weighted = get_likelihood_weights(dm) !== nothing && has_obs
-    fu = weighted ? [mk(_mcem_obs_logf_batch, _sampling_dm(dm), info, loc_obs) for info in batch_infos] : nothing
+    fu = weighted ? [mk(_mcem_obs_logf_batch, _sampling_dm(dm), bi, loc_obs) for bi in nbi] : nothing
     gcfg = weighted ? [ForwardDiff.GradientConfig(fu[bi], zo) for bi in 1:nb] : nothing
     gw = [zeros(q) for _ in 1:nb]
     Δwn, Δw = zeros(q, nb), zeros(p, nb)
@@ -147,6 +185,9 @@ function _louis_batch!(W::_LouisWork, bi::Int, u::Vector{Float64}, draws, ws, ca
         fill!(H, 0.0)
         for f in parts
             copyto!(f.b, b)
+            for (bidx, upos, mul) in f.shifts
+                f.b[bidx] .+= mul ? log(u[upos]) : u[upos]
+            end
         end
         if W.fr !== nothing
             r = ForwardDiff.hessian!(W.rres[bi], W.fr[bi], zr, W.rcfg[bi])
@@ -257,13 +298,13 @@ const _LOUIS_DRAWS = 500
 # work buffers and the running averages of S and the per-batch scores.
 function _louis_init(
         dm::DataModel, batch_infos, map::_LouisThetaMap, const_cache, x::Vector{Float64};
-        ode_args, ode_kwargs, serialization
+        ode_args, ode_kwargs, serialization, shift::Bool = true
     )
     cache = build_ll_cache(
         dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
         serialization = serialization, force_saveat = true
     )
-    W = _louis_work(dm, batch_infos, map, const_cache, cache, x)
+    W = _louis_work(dm, batch_infos, map, const_cache, cache, x; shift = shift)
     p, nb = length(x), length(batch_infos)
     Δw = zeros(p, nb)
     return (;
