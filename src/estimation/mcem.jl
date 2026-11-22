@@ -401,8 +401,8 @@ function MCEM(;
         e_step
     end
     em = EMOptions(
-        maxiters, rtol_theta, atol_theta, rtol_Q, atol_Q, consecutive_params,
-        convergence_window
+        maxiters, Float64(rtol_theta), Float64(atol_theta), Float64(rtol_Q), Float64(atol_Q),
+        consecutive_params, convergence_window
     )
     ebe = EBEOptions(
         ebe_optimizer, _as_namedtuple(ebe_optim_kwargs), ebe_adtype, ebe_grad_tol,

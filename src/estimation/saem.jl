@@ -794,8 +794,9 @@ function SAEM(;
         mcmc_steps
     saem = SAEMOptions(
         sampler, turing_kwargs, :all, warm_start, verbose, progress,
-        resolved_mcmc_steps, q_store_max, q_store_epsilon, q_store_min, resolved_t0, kappa,
-        maxiters, rtol_theta, atol_theta, rtol_Q, atol_Q, consecutive_params,
+        resolved_mcmc_steps, q_store_max, q_store_epsilon, q_store_min, resolved_t0, Float64(kappa),
+        maxiters, Float64(rtol_theta), Float64(atol_theta), Float64(rtol_Q), Float64(atol_Q),
+        consecutive_params,
         convergence_window,
         suffstats, q_from_stats, mstep_closed_form,
         builtin_stats, builtin_mean, resid_var_param, re_cov_params, re_mean_params,
