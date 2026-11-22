@@ -8,6 +8,8 @@ using SciMLBase
 using OptimizationOptimisers
 using OptimizationBBO
 using LinearAlgebra
+using ComponentArrays
+using ForwardDiff
 
 const SAEM_FAST = (maxiters = 2, t0 = 1, kappa = 0.6, mcmc_steps = 1, q_store_max = 2)
 
@@ -742,6 +744,49 @@ end
         )
     )
     @test res isa FitResult
+
+    # Full 2x2 Ω: with γ = 1 the covariance used to collapse to correlation 1, about 2 log-units
+    # below the MLE (#441). The averaged MvNormal statistics keep SAEM at the closed-form MLE.
+    full = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.5)
+            b = RealNumber(0.0)
+            Ω = RealPSDMatrix([0.2 0.0; 0.0 0.05])
+            σ = RealNumber(0.3, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(MvNormal([a, b], Ω); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(η[1] + η[2] * t, σ)
+        end
+    end
+    rng = Random.Xoshiro(7)
+    ts, L = collect(0.0:4.0), cholesky([0.25 0.06; 0.06 0.04]).L
+    dff = DataFrame(ID = Int[], t = Float64[], y = Float64[])
+    for i in 1:50
+        ηi = [1.0, 0.3] .+ L * randn(rng, 2)
+        foreach(t -> push!(dff, (i, t, ηi[1] + ηi[2] * t + 0.3 * randn(rng))), ts)
+    end
+    dmf = DataModel(full, dff; primary_id = :ID, time_col = :t)
+    Z, ys = hcat(ones(5), ts), [dff.y[dff.ID .== i] for i in 1:50]
+    margll(θ) = sum(logpdf(MvNormal(Z * [θ.a, θ.b], Symmetric(Z * Matrix(θ.Ω) * Z' + θ.σ^2 * I(5))), y) for y in ys)
+    fef = NoLimits.get_fixed(full)
+    Tf, Ti = NoLimits.get_transform(fef), NoLimits.get_inverse_transform(fef)
+    θt0 = Tf(ComponentArray(a = 1.0, b = 0.3, Ω = [0.25 0.06; 0.06 0.04], σ = 0.3))
+    negll(x) = -margll(Ti(ComponentArray(x, getaxes(θt0))))
+    x = collect(θt0)
+    for _ in 1:30
+        x -= ForwardDiff.hessian(negll, x) \ ForwardDiff.gradient(negll, x)
+    end
+    rs = fit_model(dmf, NoLimits.SAEM(; progress = false, louis = false); rng = Random.Xoshiro(1))
+    θs = NoLimits.get_params(rs; scale = :untransformed)
+    Ωs = Matrix(θs.Ω)
+    @test Ωs[1, 2] / sqrt(Ωs[1, 1] * Ωs[2, 2]) < 0.95
+    @test margll(θs) > -negll(x) - 0.5
 end
 
 @testset "SAEM builtin_stats gaussian_re (multivariate diagonal + means)" begin

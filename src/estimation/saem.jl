@@ -564,7 +564,10 @@ that `Laplace`/`FOCEI`/`GHQuadrature` maximize.
   `:auto` infers the eligible blocks from the model, `:closed_form` (alias `:gaussian_re`)
   uses the maps below without inference, and `:none` optimizes every free parameter
   numerically. Routing is hybrid: parameters that are not eligible stay on the numeric
-  M-step.
+  M-step. The statistics of a multivariate normal RE (mean and covariance) are averaged with
+  an SA step of at most 0.1, also while γ = 1: resetting a full covariance to the moments of
+  one draw per subject drove its correlation to the rank-1 boundary. A full covariance on the
+  numeric M-step (`builtin_stats = :none`) has no such averaging; use `n_chains > 1` there.
 - `builtin_mean = :none`: `:glm` adds a numerical generalized-linear sub-step for the RE
   mean parameters. `:none` leaves them to the closed-form or numeric M-step.
 - `resid_var_param::Symbol = :σ`: fixed-effect name for the residual standard deviation.
@@ -2811,7 +2814,12 @@ function _saem_builtin_collect_current_stats(
     return (re = re_stats, outcome = NamedTuple(outcome_pairs), hmm = NamedTuple(hmm_pairs))
 end
 
-function _saem_builtin_smooth_re_stats(prev_re::NamedTuple, curr_re::NamedTuple, γ::Real)
+# Cap on the SA step of the closed-form statistics of multivariate normal REs (mean and
+# second moment). With γ = 1 the full Ω was reset each iteration to the moments of one draw per
+# subject; that noise fed back through the posterior draws and drove the correlation to the
+# rank-1 boundary, which is absorbing (#441). A ~10-iteration memory removes it at no cost.
+const _SAEM_MVN_STATS_GAMMA_CAP = 0.1
+function _saem_builtin_smooth_re_stats(prev_re::NamedTuple, curr_re::NamedTuple, γ0::Real)
     keys_order = Symbol[collect(keys(prev_re))...]
     for re in keys(curr_re)
         re in keys_order || push!(keys_order, re)
@@ -2821,6 +2829,8 @@ function _saem_builtin_smooth_re_stats(prev_re::NamedTuple, curr_re::NamedTuple,
         if haskey(prev_re, re) && haskey(curr_re, re)
             p = getfield(prev_re, re)
             c = getfield(curr_re, re)
+            fam = hasproperty(c, :family) ? c.family : :normal
+            γ = fam === :mvnormal ? min(γ0, _SAEM_MVN_STATS_GAMMA_CAP) : γ0
             push!(
                 pairs,
                 re => (

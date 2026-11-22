@@ -391,6 +391,7 @@ For common distribution structures, SAEM can automatically derive closed-form up
   - `:auto` attempts to infer compatible closed-form mappings from the model structure.
   - `:auto` skips any parameter that is also referenced outside the block whose sufficient statistics would update it, for example a random-effect scale that a deterministic formula also feeds into the outcome distribution, because the closed-form update would discard that information; such parameters fall back to the numeric M-step and are named in the startup info message.
   - `:gaussian_re` is accepted as a backward-compatible alias for `:closed_form`.
+  - The statistics of a multivariate normal random effect (mean and covariance) are averaged with a stochastic-approximation step of at most 0.1, also during the γ = 1 phase. Resetting a full covariance each iteration to the moments of one draw per subject drove its correlation to the rank-1 boundary, from which SAEM does not recover. A full covariance on the numeric M-step (`builtin_stats = :none`) is not averaged this way; use `n_chains > 1` there.
 - `builtin_mean`
   - `:glm` or `:none`.
 - `resid_var_param`, `re_cov_params`, `re_mean_params`
