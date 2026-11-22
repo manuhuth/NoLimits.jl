@@ -763,6 +763,13 @@ end
     r_loop = fit(NoLimits.SAEM(; progress = false, louis = :online))
     @test NoLimits.get_notes(r_loop).louis.n >= NoLimits._LOUIS_MIN_ITERS
     @test all(isapprox.(se(compute_uq(r_loop; serialization = ser)), se_exact(r_loop); rtol = 0.25))
+    # no free parameter in the RE distribution (ω fixed): the RE part of the kernel is empty
+    r_fixω = fit_model(
+        dm, NoLimits.MCEM(; progress = false); constants = (; ω = 0.7),
+        rng = Random.Xoshiro(2), serialization = ser
+    )
+    @test NoLimits.get_notes(r_fixω).louis.status == :ok
+    @test get_uq_diagnostics(compute_uq(r_fixω; serialization = ser)).approximation_method == :louis
     @test_throws ArgumentError NoLimits.SAEM(; louis = true)
     @test_throws ArgumentError NoLimits.MCEM(; louis = :exact)
     @test_throws ArgumentError NoLimits.SAEM(; louis_draws = 0)

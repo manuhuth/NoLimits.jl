@@ -83,7 +83,7 @@ function _louis_work(dm::DataModel, batch_infos, map::_LouisThetaMap, const_cach
     re_syms = reduce(union, values(get_re_syms(get_random(model))); init = Set{Symbol}())
     p1 = _partition_q1_q2_names(model, names).q1
     posF = _louis_positions(θu, names)
-    loc(ns) = [findfirst(==(k), posF) for k in _louis_positions(θu, ns)]
+    loc(ns) = Int[findfirst(==(k), posF) for k in _louis_positions(θu, ns)]
     loc_re, loc_obs = loc([n for n in names if n in re_syms]), loc(p1)
     q = length(posF)
     mk(fun, d, info, l) = _LouisPartLogf(fun, d, info, const_cache, Ref(c1), zeros(get_n_b(info)), copy(u), posF[l], axs)
