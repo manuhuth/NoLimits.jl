@@ -1067,7 +1067,8 @@ not supported — use [`Laplace`](@ref) for those.
 A gradient-based outer optimizer must cap its line-search step; see the `optimizer` entry in
 [`Laplace`](@ref) for why and for the measured numbers.
 
-Keyword arguments mirror [`Laplace`](@ref) (including `precondition`, `warm_starts`,
+Keyword arguments mirror [`Laplace`](@ref) (including `precondition`, `multistart_progress`
+(a progress bar for the inner EBE multistart), `warm_starts`,
 see [`AcceptedWarmStarts`](@ref), and `batch_threading`, which threads over the individuals
 of a nested random-effects batch, default `false`); the only
 addition is `interaction::Bool=true`. The `optimizer` default is LBFGS with backtracking
@@ -1115,6 +1116,7 @@ function FOCEI(;
         multistart_grad_tol = inner_grad_tol,
         multistart_max_rounds = 1,
         multistart_sampling = :lhs,
+        multistart_progress = false,
         jitter = 1.0e-6,
         max_tries = 6,
         jitter_growth = 10.0,
@@ -1142,7 +1144,7 @@ function FOCEI(;
     ms = multistart_options === nothing ?
         LaplaceMultistartOptions(
             multistart_n, multistart_k, multistart_grad_tol,
-            multistart_max_rounds, _as_symbol(multistart_sampling)
+            multistart_max_rounds, _as_symbol(multistart_sampling), Bool(multistart_progress)
         ) : multistart_options
     optim_kwargs === nothing &&
         (optim_kwargs = _outer_default_optim_kwargs(optimizer, (; maxiters = 1000)))

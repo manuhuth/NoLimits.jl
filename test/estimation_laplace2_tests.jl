@@ -149,6 +149,35 @@ end
         ),
         rng = MersenneTwister(1)
     ) isa FitResult
+
+    # multistart_progress (#443): bar output only, results bit-identical
+    @test !NoLimits.LaplaceMultistartOptions(2, 2, 0.0, 1, :lhs).progress
+    dm = fx_re_dm()
+    kw = (; optim_kwargs = (maxiters = 2,), multistart_n = 2, multistart_k = 2, multistart_grad_tol = 0.0)
+    capture(f) = mktemp() do path, io
+        r = redirect_stderr(f, io)
+        flush(io)
+        return r, read(path, String)
+    end
+    for M in (NoLimits.Laplace, NoLimits.FOCEI), ser in (EnsembleSerial(), EnsembleThreads())
+        off = fit_model(dm, M(; kw...); rng = MersenneTwister(1), serialization = ser)
+        on, txt = capture(
+            () -> fit_model(
+                dm, M(; kw..., multistart_progress = true); rng = MersenneTwister(1), serialization = ser
+            )
+        )
+        @test NoLimits.get_objective(on) == NoLimits.get_objective(off)
+        @test NoLimits.get_params(on; scale = :transformed) == NoLimits.get_params(off; scale = :transformed)
+        @test occursin("EBE multistart", txt) && occursin("batches multistarted", txt)
+    end
+    _, txt = capture(() -> fit_model(dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,))))
+    @test !occursin("EBE multistart", txt)
+    @test fit_model(dm, NoLimits.Laplace(; kw..., multistart_n = 0, multistart_progress = true)) isa FitResult
+    ws = NoLimits.AcceptedWarmStarts(; initial_multistart = true, n_draw = 4, n_local = 1)
+    _, txt = capture(
+        () -> fit_model(dm, NoLimits.Laplace(; kw..., multistart_progress = true, warm_starts = ws))
+    )
+    @test occursin("accepted iterate", txt)
 end
 
 @testset "Laplace objective cache only reuses valid gradients" begin
