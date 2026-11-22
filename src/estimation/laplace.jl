@@ -2066,14 +2066,16 @@ mutable struct _MSProgressTally
     last_bi::Int
     last::typeof(_NO_MS_STATS)
     grad_tol::Float64
+    done::Int
 end
 _MSProgressTally(n_batches, grad_tol) =
-    _MSProgressTally(ReentrantLock(), n_batches, 0, 0.0, 0.0, 0, _NO_MS_STATS, Float64(grad_tol))
+    _MSProgressTally(ReentrantLock(), n_batches, 0, 0.0, 0.0, 0, _NO_MS_STATS, Float64(grad_tol), 0)
 
 _ms_fmt(x) = string(round(x; sigdigits = 4))
 
 function _ms_showvalues(t::_MSProgressTally)
     s = t.last
+    t.n_ms == 0 && return [("batches multistarted", "0 of $(t.n_batches)")]
     return [
         ("batches multistarted", "$(t.n_ms) of $(t.n_batches)"),
         ("last batch", t.last_bi),
@@ -2085,9 +2087,11 @@ function _ms_showvalues(t::_MSProgressTally)
     ]
 end
 
-_ms_progress_update!(p, ::Nothing, count, bi, stats) = ProgressMeter.update!(p, count)
-function _ms_progress_update!(p, t::_MSProgressTally, count, bi, stats)
+# `count`: individuals done so far; `nbi`: individuals of batch `bi`.
+_ms_progress_update!(p, ::Nothing, count, nbi, bi, stats) = ProgressMeter.update!(p, count)
+function _ms_progress_update!(p, t::_MSProgressTally, count, nbi, bi, stats)
     lock(t.lock) do
+        t.done += nbi   # counted under the lock, so the 100% update comes last
         if stats.ran
             t.n_ms += 1
             t.gain += stats.f_after - stats.f_before
@@ -2095,7 +2099,7 @@ function _ms_progress_update!(p, t::_MSProgressTally, count, bi, stats)
             t.last_bi = bi
             t.last = stats
         end
-        ProgressMeter.update!(p, max(count, p.counter); showvalues = () -> _ms_showvalues(t))
+        ProgressMeter.update!(p, t.done; showvalues = () -> _ms_showvalues(t))
     end
     return nothing
 end
@@ -2243,7 +2247,7 @@ function _laplace_get_bstar!(
             )
             new_count = Threads.atomic_add!(ind_counter, max(0, get_n_b(info))) +
                 max(0, get_n_b(info))
-            _ms_progress_update!(p, tally, new_count, bi, stats)
+            _ms_progress_update!(p, tally, new_count, max(0, get_n_b(info)), bi, stats)
         end
     else
         ll_cache_local = ll_cache isa AbstractVector ? ll_cache[1] : ll_cache
@@ -2262,7 +2266,7 @@ function _laplace_get_bstar!(
                     mcmc_candidates_by_batch[bi]
             )
             ind_done += max(0, get_n_b(info))
-            _ms_progress_update!(p, tally, ind_done, bi, stats)
+            _ms_progress_update!(p, tally, ind_done, max(0, get_n_b(info)), bi, stats)
         end
     end
     ProgressMeter.finish!(p)

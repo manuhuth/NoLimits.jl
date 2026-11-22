@@ -46,6 +46,11 @@ This release changes the plotting API without deprecation paths:
 
 ### Changes
 
+- `Laplace` and `FOCEI` take `multistart_progress = true` (#443): a progress bar over the
+  individuals for each objective evaluation in which the inner EBE multistart can run (no
+  usable warm start, e.g. the first evaluation, and the `AcceptedWarmStarts` multistarts),
+  with the gradient norm and `log f` before and after the multistart, starts evaluated,
+  rounds and the total `log f` gain. Results are unchanged.
 - Nested random effects (#408): a random-effects batch with several individuals and a
   small shared block (e.g. subject-level REs inside experiment-level REs) is now solved
   through its block-arrow structure. Gradients and Hessians of the log-joint are taken
