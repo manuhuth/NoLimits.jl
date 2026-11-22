@@ -170,9 +170,11 @@ end
         @test NoLimits.get_params(on; scale = :transformed) == NoLimits.get_params(off; scale = :transformed)
         @test occursin("EBE multistart", txt) && occursin("batches multistarted", txt)
     end
-    _, txt = capture(() -> fit_model(dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,))))
+    # bar only where a multistart ran: none with default settings or multistart_n = 0
+    _, txt = capture(() -> fit_model(dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,), multistart_progress = true)))
     @test !occursin("EBE multistart", txt)
-    @test fit_model(dm, NoLimits.Laplace(; kw..., multistart_n = 0, multistart_progress = true)) isa FitResult
+    r0, txt = capture(() -> fit_model(dm, NoLimits.Laplace(; kw..., multistart_n = 0, multistart_progress = true)))
+    @test r0 isa FitResult && !occursin("EBE multistart", txt)
     ws = NoLimits.AcceptedWarmStarts(; initial_multistart = true, n_draw = 4, n_local = 1)
     _, txt = capture(
         () -> fit_model(dm, NoLimits.Laplace(; kw..., multistart_progress = true, warm_starts = ws))

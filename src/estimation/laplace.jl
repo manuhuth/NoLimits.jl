@@ -1792,7 +1792,7 @@ function _laplace_compute_bstar_batch!(
             resize!(b_slot, 0)
         end
         cache.bstar_cache.has_bstar[bi] = true
-        return _NO_MS_STATS
+        return nothing
     end
     # θ-only work (symmetrize + RE-distribution table) hoisted once per batch
     # per θ-evaluation — every logf/gradient/Hessian/solve below reuses it.
@@ -1938,7 +1938,7 @@ function _laplace_compute_bstar_batch!(
     # rescue passes, and `reestimate_ebes` (all of which build fresh b*-caches).
     multistart_allowed = use_mcmc || !warm_start_usable ||
         !isfinite(best_f) || !isfinite(g_best_norm)
-    stats = _NO_MS_STATS
+    stats = nothing   # summary only when a multistart ran: no return value on the hot path
     if multistart_allowed && g_best_norm > multistart.grad_tol && multistart.k > 0 &&
             (multistart.n > 0 || use_mcmc)
         g_before, f_before, n_starts, rounds = g_best_norm, best_f, 0, 0
@@ -2050,16 +2050,19 @@ function _laplace_compute_bstar_batch!(
     return stats
 end
 
-# Summary of one batch's inner multistart, returned by `_laplace_compute_bstar_batch!`.
+# Layout of the multistart summary returned by `_laplace_compute_bstar_batch!` (`nothing` when
+# no multistart ran).
 const _NO_MS_STATS = (;
     ran = false, g_before = NaN, g_after = NaN, f_before = NaN, f_after = NaN,
     n_starts = 0, rounds = 0,
 )
 
-# Running totals behind the `multistart_progress` bar.
+# Running totals behind the `multistart_progress` bar. The bar is created at the first batch
+# whose multistart ran, so evaluations without one print nothing.
 mutable struct _MSProgressTally
     lock::ReentrantLock
     n_batches::Int
+    total::Int
     n_ms::Int
     gain::Float64
     max_g::Float64
@@ -2067,15 +2070,16 @@ mutable struct _MSProgressTally
     last::typeof(_NO_MS_STATS)
     grad_tol::Float64
     done::Int
+    bar::Union{Nothing, ProgressMeter.Progress}
 end
-_MSProgressTally(n_batches, grad_tol) =
-    _MSProgressTally(ReentrantLock(), n_batches, 0, 0.0, 0.0, 0, _NO_MS_STATS, Float64(grad_tol), 0)
+_MSProgressTally(n_batches, total, grad_tol) = _MSProgressTally(
+    ReentrantLock(), n_batches, total, 0, 0.0, 0.0, 0, _NO_MS_STATS, Float64(grad_tol), 0, nothing
+)
 
 _ms_fmt(x) = string(round(x; sigdigits = 4))
 
 function _ms_showvalues(t::_MSProgressTally)
     s = t.last
-    t.n_ms == 0 && return [("batches multistarted", "0 of $(t.n_batches)")]
     return [
         ("batches multistarted", "$(t.n_ms) of $(t.n_batches)"),
         ("last batch", t.last_bi),
@@ -2087,36 +2091,26 @@ function _ms_showvalues(t::_MSProgressTally)
     ]
 end
 
-# `count`: individuals done so far; `nbi`: individuals of batch `bi`.
-_ms_progress_update!(p, ::Nothing, count, nbi, bi, stats) = ProgressMeter.update!(p, count)
-function _ms_progress_update!(p, t::_MSProgressTally, count, nbi, bi, stats)
+# `nbi`: individuals of batch `bi`; counted under the lock, so the 100% update comes last.
+function _ms_progress_update!(t::_MSProgressTally, nbi, bi, stats)
     lock(t.lock) do
-        t.done += nbi   # counted under the lock, so the 100% update comes last
-        if stats.ran
+        before = t.done
+        t.done += nbi
+        if stats !== nothing
             t.n_ms += 1
             t.gain += stats.f_after - stats.f_before
             t.max_g = max(t.max_g, stats.g_after)
             t.last_bi = bi
             t.last = stats
+            if t.bar === nothing
+                # forced first print, so the final 100% line is printed too
+                t.bar = ProgressMeter.Progress(t.total; desc = "EBE multistart", start = before)
+                ProgressMeter.update!(t.bar, before; force = true, showvalues = _ms_showvalues(t))
+            end
         end
-        ProgressMeter.update!(p, t.done; showvalues = () -> _ms_showvalues(t))
+        t.bar === nothing || ProgressMeter.update!(t.bar, t.done; showvalues = () -> _ms_showvalues(t))
     end
     return nothing
-end
-
-# Whether some active batch has no warm start, so that its inner multistart can run.
-function _laplace_any_cold(cache::_LaplaceCache, batch_infos, active_batches)
-    for (bi, info) in enumerate(batch_infos)
-        active_batches !== nothing && !(bi ∈ active_batches) && continue
-        nb = get_n_b(info)
-        nb == 0 && continue
-        cache.warm !== nothing && length(cache.warm[bi]) != nb && return true
-        cache.warm === nothing && (
-            !cache.bstar_cache.has_bstar[bi] ||
-                length(cache.bstar_cache.b_star[bi]) != nb
-        ) && return true
-    end
-    return false
 end
 
 # `_laplace_solve_batch!` with the inner-solve failures of `_laplace_compute_bstar_batch!`
@@ -2203,22 +2197,16 @@ function _laplace_get_bstar!(
             if active_batches === nothing || bi ∈ active_batches;
         init = 0
     )
-    # `multistart_progress`: a bar only for evaluations in which a multistart can run.
-    show_ms = !progress && multistart.progress && total_inds > 0 && multistart.k > 0 &&
-        (multistart.n > 0 || mcmc_candidates_by_batch !== nothing) &&
-        _laplace_any_cold(cache, batch_infos, active_batches)
     p = ProgressMeter.Progress(
-        total_inds; desc = show_ms ? "EBE multistart" : progress_desc,
-        enabled = (progress || show_ms) && total_inds > 0
+        total_inds; desc = progress_desc, enabled = progress && total_inds > 0
     )
     # single assignment: `tally` is captured by the threaded closure below
-    tally = show_ms ? _MSProgressTally(
+    tally = !progress && multistart.progress ? _MSProgressTally(
             count(
                 bi -> get_n_b(batch_infos[bi]) > 0 &&
                 (active_batches === nothing || bi ∈ active_batches), eachindex(batch_infos)
-            ), multistart.grad_tol
+            ), total_inds, multistart.grad_tol
         ) : nothing
-    show_ms && ProgressMeter.update!(p, 0; force = true)   # print at once: the first batch can be slow
     θ_val = _laplace_floatize(θ)
     batch_rngs = _laplace_thread_rngs(rng, length(batch_infos))
     use_threaded = serialization isa SciMLBase.EnsembleThreads ||
@@ -2247,7 +2235,8 @@ function _laplace_get_bstar!(
             )
             new_count = Threads.atomic_add!(ind_counter, max(0, get_n_b(info))) +
                 max(0, get_n_b(info))
-            _ms_progress_update!(p, tally, new_count, max(0, get_n_b(info)), bi, stats)
+            ProgressMeter.update!(p, new_count)
+            tally === nothing || _ms_progress_update!(tally, max(0, get_n_b(info)), bi, stats)
         end
     else
         ll_cache_local = ll_cache isa AbstractVector ? ll_cache[1] : ll_cache
@@ -2266,10 +2255,13 @@ function _laplace_get_bstar!(
                     mcmc_candidates_by_batch[bi]
             )
             ind_done += max(0, get_n_b(info))
-            _ms_progress_update!(p, tally, ind_done, max(0, get_n_b(info)), bi, stats)
+            ProgressMeter.update!(p, ind_done)
+            tally === nothing || _ms_progress_update!(tally, max(0, get_n_b(info)), bi, stats)
         end
     end
     ProgressMeter.finish!(p)
+    tally === nothing || tally.bar === nothing ||
+        ProgressMeter.finish!(tally.bar; showvalues = _ms_showvalues(tally))
     if !(eltype(θ_vec) <: ForwardDiff.Dual)
         cache.θ_cache = copy(θ_vec)
     end
@@ -3802,18 +3794,22 @@ function _laplace_accepted_multistart!(
     # Chunk-indexed cache assignment, as in `_laplace_get_bstar!`.
     Threads.@threads for c in 1:n_chunks
         for bi in c:n_chunks:nbat
-            gains[bi] = _laplace_accepted_multistart_batch!(
+            g = _laplace_accepted_multistart_batch!(
                 cache, bi, dm, batch_infos[bi], θ_val, const_cache, caches[c], inner, ws;
                 from_default = from_default
             )
-            progress && lock(plock) do
-                n_done[] += 1
-                ProgressMeter.update!(
-                    p, n_done[]; showvalues = () -> [
+            if progress
+                lock(plock) do   # all reads and writes of `gains` under the lock
+                    gains[bi] = g
+                    n_done[] += 1
+                    sv = [
                         ("batches improved", count(>(0), gains)),
                         ("total log f gain", _ms_fmt(sum(gains))),
                     ]
-                )
+                    ProgressMeter.update!(p, n_done[]; showvalues = sv)
+                end
+            else
+                gains[bi] = g
             end
         end
     end
