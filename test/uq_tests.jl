@@ -7,6 +7,7 @@ using Distributions
 using ComponentArrays
 using Random
 using LinearAlgebra
+using ForwardDiff
 using OptimizationOptimJL
 using NoLimits.LineSearches
 import Turing   # MCMC/VI need the Turing extension loaded (#36)
@@ -650,13 +651,15 @@ end
         )
     )
 
-    uq = compute_uq(res; method = :wald, n_draws = 40, rng = Random.Xoshiro(21))
+    # the default uses the fit's Louis information (#441); re_approx selects the marginal
+    @test get_uq_diagnostics(compute_uq(res; method = :wald, n_draws = 40)).approximation_method == :louis
+    uq = compute_uq(res; method = :wald, re_approx = :focei, n_draws = 40, rng = Random.Xoshiro(21))
     @test get_uq_backend(uq) == :wald
     @test get_uq_source_method(uq) == :mcem
     @test get_uq_parameter_names(uq) == [:a, :ω]
     @test size(get_uq_vcov(uq)) == (2, 2)
     d = get_uq_diagnostics(uq)
-    @test d.approximation_method == :focei      # default approximation
+    @test d.approximation_method == :focei
     @test_throws ErrorException compute_uq(res; method = :wald, re_approx = :invalid)
     @test_throws ArgumentError compute_uq(res; method = :wald, hessian_backend = :forwarddiff)
     for kw in ((; re_approx = :laplace), (; re_approx_method = NoLimits.Laplace()))
@@ -690,6 +693,91 @@ end
             end for i in act, j in act
     ]
     @test H_uq ≈ H_ref rtol = 2.0e-4
+end
+
+@testset "Louis information for SAEM/MCEM (#441)" begin
+    # y ~ Normal(a + η, σ), η ~ Normal(0, ω): the marginal is MvNormal(a, σ²I + ω²J), so the
+    # exact observed information is the ForwardDiff Hessian of that closed form.
+    model = fx_re_model()
+    ser = NoLimits.EnsembleSerial()
+    rng = Random.Xoshiro(11)
+    n, m = 30, 3
+    ids = repeat(1:n, inner = m)
+    ηt = 0.8 .* randn(rng, n)
+    df = DataFrame(ID = ids, t = repeat(0.0:(m - 1), n), y = [1.0 + ηt[i] + 0.5 * randn(rng) for i in ids])
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    fe = NoLimits.get_fixed(model)
+    Tf, Ti = NoLimits.get_transform(fe), NoLimits.get_inverse_transform(fe)
+    θ = ComponentArray(a = 0.9, σ = 0.6, ω = 0.7)
+    θt = Tf(θ)
+    ys = [df.y[df.ID .== i] for i in 1:n]
+    function negll(x)
+        θu = Ti(ComponentArray(x, getaxes(θt)))
+        Σ = Symmetric(θu.σ^2 * I(m) + θu.ω^2 * ones(m, m))
+        return -sum(logpdf(MvNormal(fill(θu.a, m), Σ), y) for y in ys)
+    end
+
+    # Fixed θ, exact iid posterior draws (4000 per subject). The model is additive (y = a + η),
+    # so a is differentiated in the shifted latent φ = η + a, which removes most MC error.
+    @test NoLimits._louis_shift_pairs(dm, [:a, :σ, :ω]) == [(fe = :a, re = :η, k = 0, mode = :add)]
+    _, bis, cc = NoLimits.build_re_batch_infos(dm, NamedTuple())
+    lmap = NoLimits._LouisThetaMap(getaxes(θt), θt, getaxes(θt), [:a, :σ, :ω], Ti)
+    v = 1 / (m / θ.σ^2 + 1 / θ.ω^2)
+    draws = [
+        let y = ys[only(NoLimits.get_batch_individuals(b))]
+                v * sum(y .- θ.a) / θ.σ^2 .+ sqrt(v) .* randn(rng, 1, 4000)
+        end for b in bis
+    ]
+    x = collect(θt)
+    st = NoLimits._louis_init(dm, bis, lmap, cc, x; ode_args = (), ode_kwargs = NamedTuple(), serialization = ser)
+    NoLimits._louis_average!(st, dm, bis, x, bi -> eachcol(draws[bi]), _ -> nothing, ser)
+    A, _ = NoLimits._louis_matrices(st.S, st.Δw, st.Δu, dm, bis)
+    H = ForwardDiff.hessian(negll, x)
+    @test maximum(abs.(A .- H) ./ sqrt.(diag(H) * diag(H)')) < 0.02
+
+    # Fits with default settings: Louis SEs vs exact-marginal Wald SEs at the same estimate.
+    se_exact(r) = sqrt.(diag(inv(ForwardDiff.hessian(negll, collect(Tf(get_params(r; scale = :untransformed)))))))
+    se(u) = sqrt.(diag(get_uq_vcov(u; scale = :transformed)))
+    fit(meth) = fit_model(dm, meth; rng = Random.Xoshiro(2), serialization = ser)
+    for (on, off) in (
+            (NoLimits.SAEM(; progress = false), NoLimits.SAEM(; progress = false, louis = false)),
+            (NoLimits.MCEM(; progress = false, louis = :posterior), NoLimits.MCEM(; progress = false, louis = false)),
+        )
+        r1, r0 = fit(on), fit(off)
+        # Louis consumes no RNG of the fit
+        @test get_params(r1; scale = :untransformed) == get_params(r0; scale = :untransformed)
+        @test NoLimits.get_eb_modes(NoLimits.get_result(r1)) == NoLimits.get_eb_modes(NoLimits.get_result(r0))
+        u1 = compute_uq(r1; serialization = ser)
+        @test get_uq_diagnostics(u1).approximation_method == :louis
+        @test all(isapprox.(se(u1), se_exact(r1); rtol = 0.2))
+        us = compute_uq(r1; vcov = :sandwich, serialization = ser)
+        @test get_uq_diagnostics(us).approximation_method == :louis
+        @test all(isfinite, get_uq_vcov(us))
+        @test get_uq_diagnostics(compute_uq(r0; serialization = ser)).approximation_method == :focei
+    end
+
+    # louis = :online: a fit that never reaches the decreasing-step
+    # phase stores no information, and compute_uq falls back with a warning.
+    r_short = fit(NoLimits.SAEM(; progress = false, louis = :online, maxiters = 5))
+    @test NoLimits.get_notes(r_short).louis.status == :too_few_iterations
+    u_short = @test_logs (:warn, r"Louis information unavailable") match_mode = :any compute_uq(r_short; serialization = ser)
+    @test get_uq_diagnostics(u_short).approximation_method == :focei
+    r_loop = fit(NoLimits.SAEM(; progress = false, louis = :online))
+    @test NoLimits.get_notes(r_loop).louis.n >= NoLimits._LOUIS_MIN_ITERS
+    @test all(isapprox.(se(compute_uq(r_loop; serialization = ser)), se_exact(r_loop); rtol = 0.25))
+    # no free parameter in the RE distribution (ω fixed): the RE part of the kernel is empty
+    r_fixω = fit_model(
+        dm, NoLimits.MCEM(; progress = false); constants = (; ω = 0.7),
+        rng = Random.Xoshiro(2), serialization = ser
+    )
+    @test NoLimits.get_notes(r_fixω).louis.status == :ok
+    @test get_uq_diagnostics(compute_uq(r_fixω; serialization = ser)).approximation_method == :louis
+    @test_throws ArgumentError NoLimits.SAEM(; louis = true)
+    # integer tolerances are accepted ("set both to 0 to disable early stopping")
+    @test NoLimits.SAEM(; rtol_theta = 0, atol_theta = 0, rtol_Q = 0, atol_Q = 0).saem.rtol_theta === 0.0
+    @test NoLimits.MCEM(; rtol_theta = 0, atol_theta = 0, rtol_Q = 0, atol_Q = 0).em.rtol_theta === 0.0
+    @test_throws ArgumentError NoLimits.MCEM(; louis = :exact)
+    @test_throws ArgumentError NoLimits.SAEM(; louis_draws = 0)
 end
 
 # ── :logit scale UQ helpers ──────────────────────────────────────────────────

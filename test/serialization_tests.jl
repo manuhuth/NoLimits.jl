@@ -170,6 +170,18 @@ end
 
 # ── Pooled ────────────────────────────────────────────────────────────────────
 
+@testset "Serialization SAEM keeps the Louis information (#441)" begin
+    res = fx_saem()
+    path = tempname() * ".jld2"
+    save_fit(path, res)
+    res2 = load_fit(path; dm = fx_re_dm())
+    l1, l2 = NoLimits.get_notes(res).louis, NoLimits.get_notes(res2).louis
+    @test l1.status == :ok
+    @test l2.A == l1.A
+    @test l2.B == l1.B
+    @test l2.coords == l1.coords
+end
+
 @testset "Serialization Pooled" begin
     model = _simple_model_with_re()
     df = _df_with_re()

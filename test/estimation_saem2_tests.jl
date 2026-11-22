@@ -290,6 +290,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             q_store_max = 2,
             maxiters = 2,
@@ -370,6 +371,7 @@ end
     res_partial = fit_model(
         dm_partial,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             mcmc_steps = 1,
@@ -435,6 +437,7 @@ end
     res_ineligible = fit_model(
         dm_ineligible,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             mcmc_steps = 1,
@@ -504,6 +507,7 @@ end
     res = fit_model(
         _SAEM_HMM2_DM_MISSING,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             mcmc_steps = 1,
@@ -570,6 +574,7 @@ end
     res = fit_model(
         _SAEM_LTS_DM,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             mcmc_steps = 1,
@@ -596,6 +601,7 @@ end
     res = fit_model(
         fx_tiny_re_dm(),
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...,
             builtin_mean = :glm,
@@ -643,6 +649,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...,
             builtin_mean = :glm
@@ -685,6 +692,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...,
             builtin_mean = :glm
@@ -697,6 +705,7 @@ end
     res = fit_model(
         fx_ode_dm(),
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             q_store_max = 2,
             maxiters = 2,
@@ -710,6 +719,7 @@ end
     res = fit_model(
         fx_re_dm(),
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...,
             builtin_mean = :glm,
@@ -725,6 +735,7 @@ end
     res = fit_model(
         _SAEM_SEP_DM,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...,
             builtin_mean = :glm,
@@ -777,7 +788,7 @@ end
         ebe_rescue_multistart_k = 2, ebe_rescue_max_rounds = 7,
         ebe_rescue_grad_tol = 1.0e-5,
     )
-    saem = NoLimits.SAEM(; rescue_kwargs...)
+    saem = NoLimits.SAEM(; louis_draws = 50, rescue_kwargs...)
     mcem = NoLimits.MCEM(; rescue_kwargs...)
     for (label, rescue) in (("SAEM", saem.saem.ebe_rescue), ("MCEM", mcem.ebe_rescue))
         @testset "$label" begin
@@ -801,6 +812,7 @@ end
             (
                 "SAEM",
                 NoLimits.SAEM(;
+                    louis_draws = 50,
                     sampler = MH(), turing_kwargs = tk, q_store_max = 2,
                     maxiters = 2, mcmc_steps = 1, t0 = 1, rescue_kwargs...
                 ),
@@ -831,6 +843,7 @@ end
             (
                 "SAEM",
                 NoLimits.SAEM(;
+                    louis_draws = 50,
                     sampler = MH(), turing_kwargs = tk, maxiters = 3,
                     t0 = 1, kappa = 0.6, mcmc_steps = 1, q_store_max = 2
                 ),
@@ -876,6 +889,7 @@ end
             (
                 "SAEM",
                 NoLimits.SAEM(;
+                    louis_draws = 50,
                     sampler = MH(), turing_kwargs = tk, maxiters = 3,
                     t0 = 1, kappa = 0.6, mcmc_steps = 1, q_store_max = 2
                 ),
@@ -902,7 +916,7 @@ end
 @testset "SAEM/MCEM get_loglikelihood" begin
     tk = (n_samples = 2, n_adapt = 2, progress = false)
     for (label, method) in (
-            ("SAEM", NoLimits.SAEM(; sampler = MH(), turing_kwargs = tk, SAEM_FAST...)),
+            ("SAEM", NoLimits.SAEM(; louis_draws = 50, sampler = MH(), turing_kwargs = tk, SAEM_FAST...)),
             ("MCEM", NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, maxiters = 2)),
         )
         @testset "$label" begin

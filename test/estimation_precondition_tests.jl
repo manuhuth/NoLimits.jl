@@ -116,6 +116,7 @@ end
         (
             "SAEM", _PC_DM_RE,
             pc -> NoLimits.SAEM(;
+                louis_draws = 50,
                 precondition = pc, q_store_max = 2,
                 turing_kwargs = (; n_samples = 4, n_adapt = 2, progress = false),
                 fast_em...

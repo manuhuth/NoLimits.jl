@@ -348,6 +348,7 @@ end
     F = [1.0, 0.6]
     frozen = SaemixMH(n_kern1 = 0, n_kern2 = 0, n_kern3 = 0)
     m1 = SAEM(
+        louis_draws = 50,
         maxiters = 1, t0 = 1, sa_burnin_iters = 0, sampler = frozen, mcmc_steps = 1,
         progress = false, sa_anneal_alpha = 0.0
     )
@@ -583,7 +584,7 @@ end
     @test NoLimits._saem_shared_closed_form_targets(dm, fixed_names) == Set([:ω])
     @test _auto_cfg(model, df) === nothing
 
-    cfg = NoLimits._saem_resolve_closed_form_config(dm, NoLimits.SAEM().saem)
+    cfg = NoLimits._saem_resolve_closed_form_config(dm, NoLimits.SAEM(; louis_draws = 50).saem)
     @test cfg.builtin_stats_mode == :none
     @test cfg.shared_excluded == [:ω]
     cf, num = NoLimits.saem_closed_form_eligibility(dm)
@@ -716,7 +717,7 @@ end
     @test auto_cfg.re_mean_offsets == (; CL = true)
     @test auto_cfg.resid_var_param == :sigma_C_error
 
-    for opts in (NoLimits.SAEM().saem, NoLimits._mcem_saem_opts(NoLimits.MCEM()))
+    for opts in (NoLimits.SAEM(; louis_draws = 50).saem, NoLimits._mcem_saem_opts(NoLimits.MCEM()))
         cfg = NoLimits._saem_resolve_closed_form_config(dm, opts)
         @test cfg.builtin_stats_mode == :closed_form
         @test cfg.re_mean_offsets == (; CL = true)
@@ -756,7 +757,7 @@ end
     extra = θ -> 0.0
 
     # Without an extra term: μ, ω, s are closed-form targets.
-    cfg = NoLimits._saem_resolve_closed_form_config(dm, NoLimits.SAEM().saem)
+    cfg = NoLimits._saem_resolve_closed_form_config(dm, NoLimits.SAEM(; louis_draws = 50).saem)
     @test cfg.builtin_stats_mode == :closed_form
     @test cfg.builtin_cf_elig.has_any_closed_form_block
     @test !isempty(cfg.builtin_cf_elig.re_targets)
@@ -765,7 +766,7 @@ end
     @test isempty(num)
 
     # With an extra term nothing is applied, and the diagnostics say so.
-    for opts in (NoLimits.SAEM().saem, NoLimits._mcem_saem_opts(NoLimits.MCEM()))
+    for opts in (NoLimits.SAEM(; louis_draws = 50).saem, NoLimits._mcem_saem_opts(NoLimits.MCEM()))
         cfg_x = NoLimits._saem_resolve_closed_form_config(dm, opts, extra)
         @test cfg_x.builtin_stats_mode == :none
         @test !cfg_x.builtin_cf_elig.has_any_closed_form_block
@@ -777,7 +778,7 @@ end
     @test Set(num_x) == Set([:μ, :ω, :s])
 
     # A penalized name is never updated in closed form; an RE loses mean and cov together (#421).
-    for opts in (NoLimits.SAEM().saem, NoLimits._mcem_saem_opts(NoLimits.MCEM()))
+    for opts in (NoLimits.SAEM(; louis_draws = 50).saem, NoLimits._mcem_saem_opts(NoLimits.MCEM()))
         cfg_ω = NoLimits._saem_resolve_closed_form_config(dm, opts; penalty = (; ω = 1.0))
         @test cfg_ω.re_cov_params == NamedTuple()
         @test cfg_ω.re_mean_params == NamedTuple()
@@ -787,7 +788,7 @@ end
         @test isempty(cfg_s.builtin_cf_elig.outcome_targets_non_hmm)
     end
     # The penalty also enters the numeric Q2 M-step of ω.
-    sae = SAEM(maxiters = 20, progress = false, builtin_stats = :none)
+    sae = SAEM(louis_draws = 50, maxiters = 20, progress = false, builtin_stats = :none)
     ω_free = NoLimits.get_params(fit_model(dm, sae); scale = :untransformed).ω
     ω_pen = NoLimits.get_params(fit_model(dm, sae; penalty = (; ω = 1.0e4)); scale = :untransformed).ω
     @test ω_pen < 0.5 * ω_free

@@ -220,6 +220,7 @@ end
     )
     @test !isempty(NoLimits.get_random_effects(res_mcem))
     saem_m = NoLimits.SAEM(;
+        louis_draws = 50,
         sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
         q_store_max = 2,
         maxiters = 2
@@ -242,7 +243,7 @@ end
     )
     @test NoLimits.get_multistart_starts(fit_model(ms7, fx_nore_dm(), mle)) !=
         NoLimits.get_multistart_starts(r1)
-    saem_d = NoLimits.SAEM(; maxiters = 2, q_store_max = 2, sa_burnin_iters = 0, progress = false)
+    saem_d = NoLimits.SAEM(; louis_draws = 50, maxiters = 2, q_store_max = 2, sa_burnin_iters = 0, progress = false)
     rd = fit_model(ms, fx_re_dm(), saem_d)
     @test θ(fit_model(ms, fx_re_dm(), saem_d)) == θ(rd)
     @test θ(fit_model(ms, fx_re_dm(), saem_d; rng = Xoshiro(7))) != θ(rd)
@@ -258,6 +259,7 @@ end
         ms,
         fx_re_dm(),
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             q_store_max = 2,
             builtin_stats = :closed_form,

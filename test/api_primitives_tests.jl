@@ -737,7 +737,7 @@ end
         end
 
         # sampling-based methods have no deterministic θ-objective, and the scale is checked
-        @test_throws ErrorException og(NoLimits.SAEM(), dm, θ0)
+        @test_throws ErrorException og(NoLimits.SAEM(; louis_draws = 50), dm, θ0)
         @test_throws ErrorException og(NoLimits.Laplace(), dm, θ0; scale = :nonsense)
         @test_throws ErrorException og(NoLimits.GHQuadrature(), dm, θ0; scale = :nonsense)
 
@@ -1677,7 +1677,7 @@ end
     @test abs(gσ(dmr)) < 1.0e-6
     @test abs(gσ(dm0)) > 1.0e-3
     llc0 = NoLimits.build_ll_cache(dm0; serialization = ser, force_saveat = true)
-    saem = NoLimits.SAEM(; maxiters = 3, q_store_max = 2)
+    saem = NoLimits.SAEM(; louis_draws = 50, maxiters = 3, q_store_max = 2)
     fit_s(d) = fit_model(d, saem; serialization = ser, rng = Random.Xoshiro(2), store_eb_modes = false)
     @test collect(NoLimits.get_params(fit_s(dm1); scale = :transformed)) ==
         collect(NoLimits.get_params(fit_s(dm0); scale = :transformed))
@@ -1691,6 +1691,63 @@ end
         @test all(isapprox.(stored, modes(dm0); rtol = 1.0e-5, atol = 1.0e-7))
         @test !all(isapprox.(stored, modes(dmr); rtol = 1.0e-5, atol = 1.0e-7))
     end
+    # Louis information (#441) at fixed θ and fixed draws vs per-draw ForwardDiff oracles:
+    # A = Σ_b (-E[∇²ℓ_w] - Cov(∇ℓ_w, ∇ℓ_u)), B = Σ_b E[∇ℓ_w]E[∇ℓ_w]ᵀ.
+    function louis_AB(d)
+        fe = NoLimits.get_fixed(model)
+        θt = NoLimits.get_transform(fe)(θ)
+        _, bis, cc = NoLimits.build_re_batch_infos(d, NamedTuple())
+        lmap = NoLimits._LouisThetaMap(getaxes(θt), θt, getaxes(θt), collect(propertynames(θt)), NoLimits.get_inverse_transform(fe))
+        x = collect(θt)
+        st = NoLimits._louis_init(d, bis, lmap, cc, x; ode_args = (), ode_kwargs = NamedTuple(), serialization = ser)
+        NoLimits._louis_average!(st, d, bis, x, bi -> eachcol(NoLimits.get_draws(draws0[bi])), _ -> nothing, ser)
+        return NoLimits._louis_matrices(st.S, st.Δw, st.Δu, d, bis)
+    end
+    function louis_oracle(d)
+        fe = NoLimits.get_fixed(model)
+        θt = NoLimits.get_transform(fe)(θ)
+        θu(x) = NoLimits.get_inverse_transform(fe)(ComponentArray(x, getaxes(θt)))
+        _, bis, cc = NoLimits.build_re_batch_infos(d, NamedTuple())
+        ds, x, p = NoLimits._sampling_dm(d), collect(θt), length(θt)
+        # additive FE/RE pairs are differentiated in the latent φ = η + a (Jacobian 1)
+        pairs = NoLimits._louis_shift_pairs(d, collect(propertynames(θt)))
+        re_names = NoLimits.get_re_names(NoLimits.get_random(model))
+        A, B = zeros(p, p), zeros(p, p)
+        for (bi, info) in enumerate(bis)
+            sh = [(NoLimits._cs_batch_indices(info, re_names, q.re, q.k), q.fe, q.mode === :mul) for q in pairs]
+            shift(θn, fe, mul) = mul ? log(getproperty(θn, fe)) : getproperty(θn, fe)
+            function eta(φ, θn)
+                v = eltype(θn).(φ)
+                for (ix, fe, mul) in sh
+                    v[ix] .-= shift(θn, fe, mul)
+                end
+                return v
+            end
+            D = NoLimits.get_draws(draws0[bi])
+            Φ = copy(D)
+            for (ix, fe, mul) in sh
+                Φ[ix, :] .+= shift(θ, fe, mul)
+            end
+            lw(φ) = x -> complete_data_loglikelihood(d, info, θu(x), eta(φ, θu(x)); const_cache = cc)
+            lu(φ) = x -> complete_data_loglikelihood(ds, info, θu(x), eta(φ, θu(x)); const_cache = cc)
+            gw = [ForwardDiff.gradient(lw(Φ[:, s]), x) for s in axes(Φ, 2)]
+            gu = [ForwardDiff.gradient(lu(Φ[:, s]), x) for s in axes(Φ, 2)]
+            Hw = [ForwardDiff.hessian(lw(Φ[:, s]), x) for s in axes(Φ, 2)]
+            Δw, Δu = sum(gw) / length(gw), sum(gu) / length(gu)
+            cov_wu = sum(gw[s] * gu[s]' for s in eachindex(gw)) / length(gw) - Δw * Δu'
+            A .+= -sum(Hw) / length(Hw) .- cov_wu
+            B .+= Δw * Δw'
+        end
+        return A, B
+    end
+    @test !isempty(NoLimits._louis_shift_pairs(dm0, [:a, :ω_e, :ω_s, :σ]))   # a ↔ η_e is shifted
+    for d in (dm0, dmr)
+        (A, B), (A0, B0) = louis_AB(d), louis_oracle(d)
+        @test A ≈ A0 rtol = 1.0e-10
+        @test B ≈ B0 rtol = 1.0e-10
+    end
+    @test !(louis_AB(dmr)[1] ≈ louis_AB(dmr)[1]')   # the weighted A is not symmetric
+    @test louis_AB(dm1)[1] ≈ louis_AB(dm0)[1] rtol = 1.0e-14   # v ≡ 1: plain Louis
     # Post-fit draws of a Laplace fit come from the unweighted conditional posterior at θ̂.
     # (a weighted fit stores the modes of its weighted integrand; its draws equal those of an
     # unweighted fit at the same θ, whose stored modes are the unweighted ones)
@@ -1705,7 +1762,7 @@ end
         @test getproperty(sw_, re)[!, end] ≈ getproperty(s0_, re)[!, end] rtol = 1.0e-6
     end
     @test !(sample_random_effects(dm0, fr(dmr); n_samples = 4, rng = Random.Xoshiro(7)).η_s[!, end] ≈ s0_.η_s[!, end])
-    @test_throws ArgumentError fit_model(dmr, NoLimits.SAEM(; suffstats = (args...) -> nothing))
+    @test_throws ArgumentError fit_model(dmr, NoLimits.SAEM(; louis_draws = 50, suffstats = (args...) -> nothing))
     @test_throws ArgumentError fit_model(dmr, NoLimits.MCMC(; sampler = MH()))
 
     # No random effects: MLE, Wald sandwich by default, CV totals weighted by v.

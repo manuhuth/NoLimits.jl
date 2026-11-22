@@ -375,7 +375,7 @@ end
     @test NoLimits._cv_method_accepts_constants_re(NoLimits.Laplace())
     @test NoLimits._cv_method_accepts_constants_re(NoLimits.FOCEI())
     @test NoLimits._cv_method_accepts_constants_re(NoLimits.GHQuadrature())
-    @test NoLimits._cv_method_accepts_constants_re(NoLimits.SAEM())
+    @test NoLimits._cv_method_accepts_constants_re(NoLimits.SAEM(; louis_draws = 50))
     @test !NoLimits._cv_method_accepts_constants_re(NoLimits.MLE())
 end
 
