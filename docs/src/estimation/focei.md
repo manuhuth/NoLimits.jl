@@ -118,7 +118,7 @@ page for the full description of the shared option groups, and the [`FOCEI`](@re
 entry for the complete keyword list.
 
 As with `Laplace`, the **outer** fixed-effects optimizer defaults to
-`OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0))`, and the outer
+`OptimizationOptimJL.LBFGS(m = 20, linesearch = LineSearches.BackTracking(maxstep = 1.0))`, and the outer
 problem is preconditioned by default (`precondition=true`). The inner EB optimization defaults
 to the Gauss-Newton variant of [`NewtonInner`](@ref),
 `NewtonInner(curvature = FisherInformationCurvature(true), x_abstol = 1e-10)`, which uses the

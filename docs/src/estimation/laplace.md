@@ -57,7 +57,7 @@ The `Laplace` constructor exposes options that control the outer fixed-effects o
 
 | Keyword | Default | What it controls |
 | --- | --- | --- |
-| `optimizer` | `LBFGS(linesearch = BackTracking(maxstep = 1.0))` | outer optimizer over fixed effects |
+| `optimizer` | `LBFGS(m = 20, linesearch = BackTracking(maxstep = 1.0))` | outer optimizer over fixed effects |
 | `optim_kwargs` | `(; maxiters = 1000)`, plus `reltol = 1e-12` for an Optim.jl optimizer | outer optimizer settings |
 | `adtype` | `AutoForwardDiff()` | AD backend for the outer gradient |
 | `inner_optimizer` | `NewtonInner(x_abstol = 1e-10)` | optimizer for the per-batch EB modes |
@@ -69,6 +69,7 @@ The `Laplace` constructor exposes options that control the outer fixed-effects o
 | `multistart_grad_tol` | `inner_grad_tol` | tolerance for accepting an EB restart |
 | `multistart_max_rounds` | `1` | EB restart rounds |
 | `multistart_sampling` | `:lhs` | how EB starting points are drawn |
+| `multistart_progress` | `false` | progress bar for evaluations in which an EB multistart can run |
 | `jitter` | `1e-6` | initial diagonal jitter on `-H` |
 | `max_tries` | `6` | jitter retries before giving up |
 | `jitter_growth` | `10.0` | factor by which jitter grows per retry |
@@ -104,6 +105,7 @@ laplace_method = NoLimits.Laplace(;
     multistart_grad_tol=:auto,
     multistart_max_rounds=1,
     multistart_sampling=:lhs,
+    multistart_progress=false,
     jitter=1e-6,
     max_tries=6,
     jitter_growth=10.0,
@@ -140,7 +142,7 @@ The constructor keywords fall into several logical groups, summarized in the tab
 | --- | --- | --- |
 | Outer optimization | `optimizer`, `optim_kwargs`, `adtype` | Optimization over fixed effects. |
 | Inner EB optimization | `inner_optimizer`, `inner_kwargs`, `inner_adtype`, `inner_grad_tol` | Optimization of batch-level EB modes used by Laplace objective/gradient evaluation. |
-| EB multistart | `multistart_n`, `multistart_k`, `multistart_grad_tol`, `multistart_max_rounds`, `multistart_sampling` | Number/selection of initial points and restart policy for EB optimization. |
+| EB multistart | `multistart_n`, `multistart_k`, `multistart_grad_tol`, `multistart_max_rounds`, `multistart_sampling`, `multistart_progress` | Number/selection of initial points and restart policy for EB optimization; optional progress display. |
 | Hessian stabilization | `jitter`, `max_tries`, `jitter_growth`, `adaptive_jitter`, `jitter_scale` | Cholesky stabilization for `-H` in log-determinant calculations. |
 | Logdet gradient strategy | `use_trace_logdet_grad`, `use_hutchinson`, `hutchinson_n` | Computational path for logdet-related derivatives. |
 | Caching | `theta_tol` | Reuse tolerance for objective/gradient cache across nearby fixed-effect values. |
@@ -158,7 +160,7 @@ Practical implications:
 
 - Outer optimizer (`optimizer`, `optim_kwargs`, `adtype`)
   - Runs once at the top level.
-  - Defaults to the local-gradient `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0))`. Derivative-free methods (e.g. `NLopt.LN_BOBYQA()`) and global methods are also supported.
+  - Defaults to the local-gradient `OptimizationOptimJL.LBFGS(m = 20, linesearch = LineSearches.BackTracking(maxstep = 1.0))`. Derivative-free methods (e.g. `NLopt.LN_BOBYQA()`) and global methods are also supported.
   - The line-search step cap matters: an uncapped unit first step can overshoot into the region where the marginal is not finite. Keep `maxstep` if you substitute another line search.
   - Note: if you switch to an NLopt optimizer, it interprets `optim_kwargs.maxiters` as a cap on the number of function *evaluations* (`maxeval`), not outer iterations; reaching it yields `retcode = MaxIters` (reported as not converged).
   - If using BlackBoxOptim (`OptimizationBBO.*`), finite bounds are required.
@@ -171,7 +173,7 @@ Practical implications:
 
 Repository-verified behavior:
 
-- Default outer optimizer is `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0))`; the default inner optimizer is `NewtonInner(x_abstol = 1e-10)`. The outer problem is preconditioned by default (`precondition=true`), so the optimizer works in a scaled offset that starts at zero; see the [`Laplace`](@ref) API entry.
+- Default outer optimizer is `OptimizationOptimJL.LBFGS(m = 20, linesearch = LineSearches.BackTracking(maxstep = 1.0))`; the default inner optimizer is `NewtonInner(x_abstol = 1e-10)`. The outer problem is preconditioned by default (`precondition=true`), so the optimizer works in a scaled offset that starts at zero; see the [`Laplace`](@ref) API entry.
 - Outer BlackBoxOptim is supported with finite bounds (`lb`, `ub`); without bounds, an error is raised.
 
 Examples:

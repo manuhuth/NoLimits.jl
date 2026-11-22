@@ -1938,8 +1938,10 @@ function _laplace_compute_bstar_batch!(
     # rescue passes, and `reestimate_ebes` (all of which build fresh b*-caches).
     multistart_allowed = use_mcmc || !warm_start_usable ||
         !isfinite(best_f) || !isfinite(g_best_norm)
+    stats = nothing   # summary only when a multistart ran: no return value on the hot path
     if multistart_allowed && g_best_norm > multistart.grad_tol && multistart.k > 0 &&
             (multistart.n > 0 || use_mcmc)
+        g_before, f_before, n_starts, rounds = g_best_norm, best_f, 0, 0
         n_mcmc_stored = use_mcmc ? size(mcmc_candidates, 2) : 0
         n = use_mcmc ? max(multistart.n, n_mcmc_stored) : multistart.n
         k = multistart.k
@@ -1964,6 +1966,8 @@ function _laplace_compute_bstar_batch!(
                     rng, n, multistart.sampling; tctx = tctx
                 )
             end
+            n_starts += n
+            rounds = round
             vals = Vector{Tuple{Float64, Vector{eltype(θ_val)}}}(undef, n)
             for s in 1:n
                 b0 = b0s[s]
@@ -2033,12 +2037,79 @@ function _laplace_compute_bstar_batch!(
             n *= 2
             k = min(k * 2, n)
         end
+        stats = (;
+            ran = true, g_before = Float64(g_before), g_after = Float64(g_best_norm),
+            f_before = Float64(f_before), f_after = Float64(best_f), n_starts, rounds,
+        )
     end
     _laplace_store_bstar!(cache, bi, b_best)
     _laplace_store_mode_hess!(
         cache.hess_cache, bi, b_best, H_best, best_f,
         optimizer isa NewtonInner ? optimizer.curvature : nothing
     )
+    return stats
+end
+
+# Layout of the multistart summary returned by `_laplace_compute_bstar_batch!` (`nothing` when
+# no multistart ran).
+const _NO_MS_STATS = (;
+    ran = false, g_before = NaN, g_after = NaN, f_before = NaN, f_after = NaN,
+    n_starts = 0, rounds = 0,
+)
+
+# Running totals behind the `multistart_progress` bar. The bar is created at the first batch
+# whose multistart ran, so evaluations without one print nothing.
+mutable struct _MSProgressTally
+    lock::ReentrantLock
+    n_batches::Int
+    total::Int
+    n_ms::Int
+    gain::Float64
+    max_g::Float64
+    last_bi::Int
+    last::typeof(_NO_MS_STATS)
+    grad_tol::Float64
+    done::Int
+    bar::Union{Nothing, ProgressMeter.Progress}
+end
+_MSProgressTally(n_batches, total, grad_tol) = _MSProgressTally(
+    ReentrantLock(), n_batches, total, 0, 0.0, 0.0, 0, _NO_MS_STATS, Float64(grad_tol), 0, nothing
+)
+
+_ms_fmt(x) = string(round(x; sigdigits = 4))
+
+function _ms_showvalues(t::_MSProgressTally)
+    s = t.last
+    return [
+        ("batches multistarted", "$(t.n_ms) of $(t.n_batches)"),
+        ("last batch", t.last_bi),
+        ("grad norm before -> after", "$(_ms_fmt(s.g_before)) -> $(_ms_fmt(s.g_after)) (tol $(_ms_fmt(t.grad_tol)))"),
+        ("log f before -> after", "$(_ms_fmt(s.f_before)) -> $(_ms_fmt(s.f_after))"),
+        ("starts evaluated, rounds", "$(s.n_starts), $(s.rounds)"),
+        ("total log f gain", _ms_fmt(t.gain)),
+        ("max grad norm after", _ms_fmt(t.max_g)),
+    ]
+end
+
+# `nbi`: individuals of batch `bi`; counted under the lock, so the 100% update comes last.
+function _ms_progress_update!(t::_MSProgressTally, nbi, bi, stats)
+    lock(t.lock) do
+        before = t.done
+        t.done += nbi
+        if stats !== nothing
+            t.n_ms += 1
+            t.gain += stats.f_after - stats.f_before
+            t.max_g = max(t.max_g, stats.g_after)
+            t.last_bi = bi
+            t.last = stats
+            if t.bar === nothing
+                # forced first print, so the final 100% line is printed too
+                t.bar = ProgressMeter.Progress(t.total; desc = "EBE multistart", start = before)
+                ProgressMeter.update!(t.bar, before; force = true, showvalues = _ms_showvalues(t))
+            end
+        end
+        t.bar === nothing || ProgressMeter.update!(t.bar, t.done; showvalues = () -> _ms_showvalues(t))
+    end
     return nothing
 end
 
@@ -2129,6 +2200,13 @@ function _laplace_get_bstar!(
     p = ProgressMeter.Progress(
         total_inds; desc = progress_desc, enabled = progress && total_inds > 0
     )
+    # single assignment: `tally` is captured by the threaded closure below
+    tally = !progress && multistart.progress ? _MSProgressTally(
+            count(
+                bi -> get_n_b(batch_infos[bi]) > 0 &&
+                (active_batches === nothing || bi ∈ active_batches), eachindex(batch_infos)
+            ), total_inds, multistart.grad_tol
+        ) : nothing
     θ_val = _laplace_floatize(θ)
     batch_rngs = _laplace_thread_rngs(rng, length(batch_infos))
     use_threaded = serialization isa SciMLBase.EnsembleThreads ||
@@ -2143,7 +2221,7 @@ function _laplace_get_bstar!(
         _laplace_foreach_batch(cache, length(batch_infos), caches) do bi, cache_c, pool
             active_batches !== nothing && !(bi ∈ active_batches) && return
             info = batch_infos[bi]
-            _laplace_compute_bstar_batch!(
+            stats = _laplace_compute_bstar_batch!(
                 cache, bi, dm, info, θ_val, const_cache, cache_c;
                 pool = pool,
                 optimizer = optimizer,
@@ -2158,13 +2236,14 @@ function _laplace_get_bstar!(
             new_count = Threads.atomic_add!(ind_counter, max(0, get_n_b(info))) +
                 max(0, get_n_b(info))
             ProgressMeter.update!(p, new_count)
+            tally === nothing || _ms_progress_update!(tally, max(0, get_n_b(info)), bi, stats)
         end
     else
         ll_cache_local = ll_cache isa AbstractVector ? ll_cache[1] : ll_cache
         ind_done = 0
         for (bi, info) in enumerate(batch_infos)
             active_batches !== nothing && !(bi ∈ active_batches) && continue
-            _laplace_compute_bstar_batch!(
+            stats = _laplace_compute_bstar_batch!(
                 cache, bi, dm, info, θ_val, const_cache, ll_cache_local;
                 optimizer = optimizer,
                 optim_kwargs = optim_kwargs,
@@ -2177,9 +2256,12 @@ function _laplace_get_bstar!(
             )
             ind_done += max(0, get_n_b(info))
             ProgressMeter.update!(p, ind_done)
+            tally === nothing || _ms_progress_update!(tally, max(0, get_n_b(info)), bi, stats)
         end
     end
     ProgressMeter.finish!(p)
+    tally === nothing || tally.bar === nothing ||
+        ProgressMeter.finish!(tally.bar; showvalues = _ms_showvalues(tally))
     if !(eltype(θ_vec) <: ForwardDiff.Dual)
         cache.θ_cache = copy(θ_vec)
     end
@@ -2763,7 +2845,10 @@ struct LaplaceMultistartOptions{T}
     grad_tol::T
     max_rounds::Int
     sampling::Symbol
+    progress::Bool
 end
+LaplaceMultistartOptions(n, k, grad_tol, max_rounds, sampling) =
+    LaplaceMultistartOptions(n, k, grad_tol, max_rounds, sampling, false)
 
 struct LaplaceHessianOptions{T}
     jitter::T
@@ -2880,11 +2965,12 @@ end
     if gt isa Symbol
         gt === :auto || error("multistart_grad_tol must be numeric or :auto.")
         return LaplaceMultistartOptions(
-            multistart.n, multistart.k, inner.grad_tol, multistart.max_rounds, sampling
+            multistart.n, multistart.k, inner.grad_tol, multistart.max_rounds, sampling,
+            multistart.progress
         )
     end
     return LaplaceMultistartOptions(
-        multistart.n, multistart.k, gt, multistart.max_rounds, sampling
+        multistart.n, multistart.k, gt, multistart.max_rounds, sampling, multistart.progress
     )
 end
 
@@ -2893,7 +2979,7 @@ end
               cache_options, multistart_options, inner_optimizer, inner_kwargs,
               inner_adtype, inner_grad_tol, multistart_n, multistart_k,
               multistart_grad_tol, multistart_max_rounds, multistart_sampling,
-              jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale,
+              multistart_progress, jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale,
               use_trace_logdet_grad, use_hutchinson, hutchinson_n, theta_tol,
               lb, ub, precondition, batch_threading) <: FittingMethod
 
@@ -2904,7 +2990,7 @@ random effects.
 
 # Keyword Arguments
 - `optimizer`: outer Optimization.jl optimizer. Defaults to
-  `OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0))`, which uses
+  `OptimizationOptimJL.LBFGS(m = 20, linesearch = LineSearches.BackTracking(maxstep = 1.0))`, which uses
   the analytic marginal gradient. For mini-batching wrap the method in [`MiniBatch`](@ref).
 
   **The `maxstep` cap is load-bearing, not decoration.** The gradient is exact, but its
@@ -2945,6 +3031,13 @@ random effects.
 - `multistart_grad_tol`: gradient tolerance for multistart refinement.
 - `multistart_max_rounds::Int = 1`: maximum multistart refinement rounds.
 - `multistart_sampling::Symbol = :lhs`: inner multistart sampling strategy (`:lhs` or `:random`).
+- `multistart_progress::Bool = false`: show a progress bar over the individuals for each
+  objective evaluation in which an inner EBE multistart can run (batches without a usable warm
+  start, e.g. the first evaluation, and the multistarts of [`AcceptedWarmStarts`](@ref)). Below
+  the bar: batches multistarted, gradient norm and `log f` of the last multistarted batch before
+  and after its multistart, starts evaluated, rounds used, total `log f` gain and the largest
+  gradient norm after a multistart. Does not change results. A `multistart_options` object, when
+  given, overrides all `multistart_*` keywords.
 - `jitter::Float64 = 1e-6`: diagonal jitter used to rescue a Cholesky of `-H` that fails
   without it. A positive-definite `-H` is always factorized untouched, so on a healthy
   problem none of the jitter keywords has any effect: a jitter that survived into the
@@ -3045,6 +3138,7 @@ function Laplace(;
         multistart_grad_tol = inner_grad_tol,
         multistart_max_rounds = 1,
         multistart_sampling = :lhs,
+        multistart_progress = false,
         jitter = 1.0e-6,
         max_tries = 6,
         jitter_growth = 10.0,
@@ -3077,7 +3171,7 @@ function Laplace(;
     ms = multistart_options === nothing ?
         LaplaceMultistartOptions(
             multistart_n, multistart_k, multistart_grad_tol,
-            multistart_max_rounds, _as_symbol(multistart_sampling)
+            multistart_max_rounds, _as_symbol(multistart_sampling), Bool(multistart_progress)
         ) : multistart_options
     optim_kwargs === nothing &&
         (optim_kwargs = _outer_default_optim_kwargs(optimizer, (; maxiters = 1000)))
@@ -3620,8 +3714,8 @@ end
 # Prior-LHS multistart of one batch at the accepted θ (see `AcceptedWarmStarts`). The
 # current mode `b_star[bi]` is the warm-start run. `from_default`: the distances of the
 # greedy selection are measured to the default inner start instead of to the mode (the
-# initial multistart, where the mode was solved from the default start). Returns true when
-# a better mode was found (stored in `b_star[bi]`).
+# initial multistart, where the mode was solved from the default start). Returns the gain in
+# log f, positive when a better mode was found (stored in `b_star[bi]`), else 0.0.
 # ponytail: the pre-screen uses the fit's solver settings, no separate reduced step budget.
 function _laplace_accepted_multistart_batch!(
         cache::_LaplaceCache, bi::Int, dm::DataModel, info::REBatchInfo, θ_val,
@@ -3629,7 +3723,7 @@ function _laplace_accepted_multistart_batch!(
         ws::AcceptedWarmStarts; from_default::Bool = false
     )
     nb = get_n_b(info)
-    nb == 0 && return false
+    nb == 0 && return 0.0
     tctx = _safe_theta_ctx(dm, info, θ_val, ll_cache)
     margs = try
         _laplace_prior_marginals(dm, info, θ_val, ll_cache, tctx)
@@ -3637,7 +3731,7 @@ function _laplace_accepted_multistart_batch!(
         _is_numeric_error(err) || rethrow(err)
         nothing
     end
-    margs === nothing && return false
+    margs === nothing && return 0.0
     sd = [Distributions.std(m) for m in margs]
     logf(b) = _laplace_logf_batch(dm, info, θ_val, b, const_cache, ll_cache; tctx = tctx)
     b_warm = collect(Float64, cache.bstar_cache.b_star[bi])
@@ -3678,30 +3772,48 @@ function _laplace_accepted_multistart_batch!(
             best_b, best_f = collect(Float64, sol.u), f
         end
     end
-    best_b === b_warm && return false
+    best_b === b_warm && return 0.0
     _laplace_store_bstar!(cache, bi, best_b)
-    return true
+    return Float64(best_f - f_warm)
 end
 
 function _laplace_accepted_multistart!(
         cache::_LaplaceCache, dm::DataModel, batch_infos::Vector{REBatchInfo}, θ,
         const_cache::REConstantsCache, ll_cache, inner::LaplaceInnerOptions,
-        ws::AcceptedWarmStarts; from_default::Bool = false
+        ws::AcceptedWarmStarts; from_default::Bool = false, progress::Bool = false
     )
     θ_val = _laplace_floatize(θ)
     caches = _laplace_thread_caches(dm, ll_cache, Threads.maxthreadid(), cache)
-    changed = fill(false, length(batch_infos))
+    nbat = length(batch_infos)
+    gains = zeros(nbat)
     n_chunks = length(caches)
+    p = ProgressMeter.Progress(nbat; desc = "EBE multistart (accepted iterate)", enabled = progress)
+    progress && ProgressMeter.update!(p, 0; force = true)
+    plock = ReentrantLock()
+    n_done = Ref(0)
     # Chunk-indexed cache assignment, as in `_laplace_get_bstar!`.
     Threads.@threads for c in 1:n_chunks
-        for bi in c:n_chunks:length(batch_infos)
-            changed[bi] = _laplace_accepted_multistart_batch!(
+        for bi in c:n_chunks:nbat
+            g = _laplace_accepted_multistart_batch!(
                 cache, bi, dm, batch_infos[bi], θ_val, const_cache, caches[c], inner, ws;
                 from_default = from_default
             )
+            if progress
+                lock(plock) do   # all reads and writes of `gains` under the lock
+                    gains[bi] = g
+                    n_done[] += 1
+                    sv = [
+                        ("batches improved", count(>(0), gains)),
+                        ("total log f gain", _ms_fmt(sum(gains))),
+                    ]
+                    ProgressMeter.update!(p, n_done[]; showvalues = sv)
+                end
+            else
+                gains[bi] = g
+            end
         end
     end
-    return any(changed)
+    return any(>(0), gains)
 end
 
 const _WARNED_STALE_REFRESH = Threads.Atomic{Bool}(false)
@@ -3991,7 +4103,7 @@ function _fit_laplace_family(
         obj_only(z0, nothing)
         if ws.initial_multistart && _laplace_accepted_multistart!(
                 ebe_cache, dm, batch_infos, θu_of(z0), const_cache, ll_cache, inner_opts, ws;
-                from_default = true
+                from_default = true, progress = multistart_opts.progress
             )
             drop_bstar_derived!()
         end
@@ -4011,7 +4123,8 @@ function _fit_laplace_family(
             if k !== nothing && state.iter > 0 && state.iter % k == 0 && state.iter != last_ms[]
                 last_ms[] = state.iter
                 changed = _laplace_accepted_multistart!(
-                    ebe_cache, dm, batch_infos, θu, const_cache, ll_cache, inner_opts, ws
+                    ebe_cache, dm, batch_infos, θu, const_cache, ll_cache, inner_opts, ws;
+                    progress = multistart_opts.progress
                 )
                 changed && drop_bstar_derived!()
             end
