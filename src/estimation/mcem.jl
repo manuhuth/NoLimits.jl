@@ -315,7 +315,7 @@ marginal likelihood that `Laplace`/`FOCEI`/`GHQuadrature` maximize.
   - `false`: no Louis information; Wald UQ uses the marginal Hessian.
   Louis draws no random numbers from the fit's streams, so the estimates are bitwise
   identical for every value. No information is stored under `MiniBatch`.
-- `louis_draws::Int = 200`: draws per batch for `louis = :posterior`.
+- `louis_draws::Int = 500`: draws per batch for `louis = :posterior`.
 """
 struct MCEM{O, K, A, ES, EO, EB, ER, L, U, US, RV, RC, RM} <: FittingMethod
     optimizer::O

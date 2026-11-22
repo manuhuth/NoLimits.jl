@@ -251,7 +251,7 @@ _louis_note(status::Symbol) = (; A = nothing, B = nothing, coords = nothing, n =
 const _LOUIS_MIN_ITERS = 20
 
 # Default length of the :posterior phase (E-step iterations for SAEM, draws per batch for MCEM).
-const _LOUIS_DRAWS = 200
+const _LOUIS_DRAWS = 500
 
 # Louis state of one fit: its own likelihood cache (the fit's caches are never touched),
 # work buffers and the running averages of S and the per-batch scores.

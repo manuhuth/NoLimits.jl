@@ -622,7 +622,7 @@ that `Laplace`/`FOCEI`/`GHQuadrature` maximize.
   Louis draws no random numbers from the fit's streams, so the estimates are bitwise
   identical for every value. No information is stored under `MiniBatch` or
   `anneal_to_fixed`.
-- `louis_draws::Int = 200`: E-step iterations of the `:posterior` phase.
+- `louis_draws::Int = 500`: E-step iterations of the `:posterior` phase.
 """
 struct SAEM{O, K, A, SO, L, U} <: FittingMethod
     optimizer::O
