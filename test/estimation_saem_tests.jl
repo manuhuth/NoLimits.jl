@@ -103,7 +103,7 @@ const _SAEM_SEP_DM_MISSING = DataModel(
 )
 
 @testset "SAEM default sampler" begin
-    method = NoLimits.SAEM()
+    method = NoLimits.SAEM(; louis_draws = 50, louis_draws = 50)
     @test method.saem.sampler isa SaemixMH
     @test method.saem.ebe_multistart_n == 50
     @test method.saem.ebe_multistart_k == 1
@@ -117,6 +117,7 @@ end
     res_numeric = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             builtin_stats = :none,
@@ -134,6 +135,7 @@ end
     res_builtin = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             builtin_stats = :closed_form,
@@ -160,6 +162,7 @@ end
     res_custom = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             builtin_stats = :none,
@@ -181,6 +184,7 @@ end
         fit_model(
             dm,
             NoLimits.SAEM(;
+                louis_draws = 50,
                 sampler = MH(),
                 turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
                 builtin_stats = :auto,
@@ -214,6 +218,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             suffstats = suffstats,
@@ -272,6 +277,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             suffstats = suffstats,
@@ -330,7 +336,7 @@ end
     etas_ln = exp.(rand(MvNormal([0.0, 0.0], Omega_true), n_id))
     df_ln = DataFrame(ID = ids, t = ts, y = etas_ln[1, ids] .+ 0.3 .* randn(length(ids)))
     dm_ln = DataModel(_SFX_MVLN_MODEL, df_ln; primary_id = :ID, time_col = :t)
-    res_ln = fit_model(dm_ln, NoLimits.SAEM(maxiters = 3, progress = false))
+    res_ln = fit_model(dm_ln, NoLimits.SAEM(louis_draws = 50, maxiters = 3, progress = false))
     @test res_ln isa FitResult
     @test isfinite(NoLimits.get_params(res_ln; scale = :untransformed).σ)
 
@@ -338,7 +344,7 @@ end
     etas_lit = rand(MvLogitNormal([0.0, 0.0], Omega_true), n_id)
     df_lit = DataFrame(ID = ids, t = ts, y = etas_lit[1, ids] .+ 0.05 .* randn(length(ids)))
     dm_lit = DataModel(_SFX_MVLIT_MODEL, df_lit; primary_id = :ID, time_col = :t)
-    res_lit = fit_model(dm_lit, NoLimits.SAEM(maxiters = 3, progress = false))
+    res_lit = fit_model(dm_lit, NoLimits.SAEM(louis_draws = 50, maxiters = 3, progress = false))
     @test res_lit isa FitResult
     @test isfinite(NoLimits.get_params(res_lit; scale = :untransformed).σ)
 
@@ -362,6 +368,7 @@ end
     res_ln = fit_model(
         dm_ln,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = AdaptiveNoLimitsMH(adapt_start = 2), maxiters = 3, mcmc_steps = 5, progress = false
         )
     )
@@ -376,6 +383,7 @@ end
     res_lit = fit_model(
         dm_lit,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = AdaptiveNoLimitsMH(adapt_start = 2), maxiters = 3, mcmc_steps = 5, progress = false
         )
     )
@@ -386,6 +394,7 @@ end
 @testset "SAEM basic (random effects)" begin
     dm = _SAEM_DM_S
     method = NoLimits.SAEM(;
+        louis_draws = 50,
         sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
         SAEM_FAST...
     )
@@ -396,7 +405,7 @@ end
     # The default rng has a fixed seed, independent of the global RNG. Default sampler,
     # no burn-in and a free ω, so θ depends on the draws after two iterations.
     θ(r) = collect(NoLimits.get_params(r; scale = :untransformed))
-    m0 = NoLimits.SAEM(; SAEM_FAST..., sa_burnin_iters = 0, progress = false)
+    m0 = NoLimits.SAEM(; louis_draws = 50, SAEM_FAST..., sa_burnin_iters = 0, progress = false)
     dm_ω = fx_re_dm()
     r0 = fit_model(dm_ω, m0)
     Random.seed!(987)
@@ -413,6 +422,7 @@ end
             (
                 "SAEM",
                 NoLimits.SAEM(;
+                    louis_draws = 50,
                     sampler = MH(), turing_kwargs = tk, maxiters = 2,
                     mcmc_steps = 1, q_store_max = 2, progress = false
                 ),
@@ -444,6 +454,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = NUTS(5, 0.3),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...
@@ -494,6 +505,7 @@ end
         res = fit_model(
             dm,
             NoLimits.SAEM(;
+                louis_draws = 50,
                 sampler = MH(), turing_kwargs = tk, sa_burnin_iters = 0,
                 t0 = 0, q_store_max = 2, maxiters = 8, convergence_window = 4,
                 consecutive_params = 1, atol_theta = Inf, rtol_theta = Inf,
@@ -525,6 +537,7 @@ end
     res = fit_model(
         _SAEM_DM_S,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             sa_burnin_iters = 0, t0 = 5, maxiters = 100, mcmc_steps = 1,
@@ -544,6 +557,7 @@ end
     res = fit_model(
         _SAEM_DM_S,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             sa_burnin_iters = 0, t0 = 0, maxiters = 6, mcmc_steps = 1,
@@ -559,7 +573,7 @@ end
     dm = fx_mg_dm()
     tk = (n_samples = 2, n_adapt = 2, progress = false)
     for (label, method) in (
-            ("SAEM", NoLimits.SAEM(; sampler = MH(), turing_kwargs = tk, SAEM_FAST...)),
+            ("SAEM", NoLimits.SAEM(; louis_draws = 50, sampler = MH(), turing_kwargs = tk, SAEM_FAST...)),
             ("MCEM", NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, maxiters = 2)),
         )
         @testset "$label" begin
@@ -575,6 +589,7 @@ end
     res = fit_model(
         _SAEM_DM_S,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...
         );
@@ -588,6 +603,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...
         );
@@ -602,6 +618,7 @@ end
         dm,
         NoLimits.MiniBatch(
             NoLimits.SAEM(;
+                louis_draws = 50,
                 sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
                 SAEM_FAST...
             ); schedule = 1
@@ -613,7 +630,7 @@ end
     fast = (maxiters = 6, t0 = 2, kappa = 0.6, mcmc_steps = 1, progress = false)
     for variant in (:incremental, :scaled)
         r = fit_model(
-            dm, NoLimits.MiniBatch(NoLimits.SAEM(; fast...); schedule = 2, em_variant = variant);
+            dm, NoLimits.MiniBatch(NoLimits.SAEM(; louis_draws = 50, fast...); schedule = 2, em_variant = variant);
             rng = MersenneTwister(1)
         )
         @test isfinite(NoLimits.get_objective(r))
@@ -622,15 +639,15 @@ end
     end
     # full batch reproduces the unwrapped fit for both variants
     mk(m) = fit_model(dm, m; serialization = EnsembleSerial(), rng = MersenneTwister(3))
-    r0 = mk(NoLimits.SAEM(; fast...))
+    r0 = mk(NoLimits.SAEM(; louis_draws = 50, fast...))
     for variant in (:incremental, :scaled)
-        r1 = mk(NoLimits.MiniBatch(NoLimits.SAEM(; fast...); schedule = 4, em_variant = variant))
+        r1 = mk(NoLimits.MiniBatch(NoLimits.SAEM(; louis_draws = 50, fast...); schedule = 4, em_variant = variant))
         @test NoLimits.get_params(r1; scale = :transformed) ≈
             NoLimits.get_params(r0; scale = :transformed) rtol = 1.0e-10
         @test NoLimits.get_objective(r1) ≈ NoLimits.get_objective(r0) rtol = 1.0e-10
     end
     # threaded == serial under the scaled variant
-    mbs = NoLimits.MiniBatch(NoLimits.SAEM(; fast...); schedule = 2, em_variant = :scaled)
+    mbs = NoLimits.MiniBatch(NoLimits.SAEM(; louis_draws = 50, fast...); schedule = 2, em_variant = :scaled)
     rs = fit_model(dm, mbs; serialization = EnsembleSerial(), rng = MersenneTwister(4))
     rt = fit_model(dm, mbs; serialization = EnsembleThreads(), rng = MersenneTwister(4))
     @test NoLimits.get_params(rs; scale = :transformed) ==
@@ -640,6 +657,7 @@ end
 @testset "SAEM optimizer Adam (OptimizationOptimisers)" begin
     dm = _SAEM_DM_S
     method = NoLimits.SAEM(;
+        louis_draws = 50,
         optimizer = OptimizationOptimisers.Adam(0.05),
         optim_kwargs = (; maxiters = 2),
         sampler = MH(),
@@ -654,6 +672,7 @@ end
     dm = _SAEM_DM_S
     lb, ub = default_bounds_from_start(dm; margin = 1.0)
     method = NoLimits.SAEM(;
+        louis_draws = 50,
         optimizer = OptimizationBBO.BBO_adaptive_de_rand_1_bin_radiuslimited(),
         optim_kwargs = (; iterations = 3),
         sampler = MH(),
@@ -670,6 +689,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...
         );
@@ -683,6 +703,7 @@ end
     res = fit_model(
         fx_recov_dm(),
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...
         )
@@ -695,6 +716,7 @@ end
     res = fit_model(
         fx_re_dm(),
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...,
             builtin_stats = :closed_form,
@@ -736,6 +758,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...,
             builtin_stats = :closed_form,
@@ -782,7 +805,7 @@ end
     for _ in 1:30
         x -= ForwardDiff.hessian(negll, x) \ ForwardDiff.gradient(negll, x)
     end
-    rs = fit_model(dmf, NoLimits.SAEM(; progress = false, louis = false); rng = Random.Xoshiro(1))
+    rs = fit_model(dmf, NoLimits.SAEM(; louis_draws = 50, progress = false, louis = false); rng = Random.Xoshiro(1))
     θs = NoLimits.get_params(rs; scale = :untransformed)
     Ωs = Matrix(θs.Ω)
     @test Ωs[1, 2] / sqrt(Ωs[1, 1] * Ωs[2, 2]) < 0.95
@@ -793,6 +816,7 @@ end
     res = fit_model(
         _SAEM_DIAG_DM,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             q_store_max = 2,
             maxiters = 2,
@@ -864,6 +888,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             q_store_max = 2,
             maxiters = 2,
@@ -911,6 +936,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...,
             builtin_stats = :closed_form,
@@ -955,6 +981,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...,
             builtin_stats = :closed_form,
@@ -969,6 +996,7 @@ end
     res = fit_model(
         _SAEM_SEP_DM,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...,
             builtin_stats = :closed_form,
@@ -983,6 +1011,7 @@ end
     res = fit_model(
         _SAEM_SEP_DM_MISSING,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             q_store_max = 2,
             maxiters = 2,
@@ -1004,6 +1033,7 @@ end
     res = fit_model(
         fx_bern_dm(),
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...,
             builtin_stats = :closed_form,
@@ -1017,6 +1047,7 @@ end
     res = fit_model(
         _SAEM_DIAG_DM,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             q_store_max = 2,
             maxiters = 2,

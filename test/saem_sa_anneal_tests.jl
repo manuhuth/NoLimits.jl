@@ -137,7 +137,7 @@ end
 end
 
 @testset "SA anneal: SAEMOptions defaults" begin
-    opts = NoLimits.SAEM().saem
+    opts = NoLimits.SAEM(; louis_draws = 50, louis_draws = 50).saem
     @test isempty(keys(opts.sa_anneal_targets))
     @test opts.sa_anneal_schedule == :exponential
     @test opts.sa_anneal_iters == opts.t0   # defaults to the resolved t0
@@ -147,6 +147,7 @@ end
 
 @testset "SA anneal: SAEMOptions explicit values" begin
     opts = NoLimits.SAEM(;
+        louis_draws = 50,
         sa_anneal_targets = (; sigma = 0.8),
         sa_anneal_schedule = :linear,
         sa_anneal_iters = 30,
@@ -227,6 +228,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2, t0 = 2, progress = false, q_store_max = 2, builtin_stats = :none,
@@ -245,6 +247,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2, t0 = 2, progress = false, q_store_max = 2, builtin_stats = :none,
@@ -258,6 +261,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2, t0 = 2, progress = false, q_store_max = 2, builtin_stats = :none,
@@ -275,6 +279,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2, t0 = 2, progress = false, q_store_max = 2, builtin_stats = :none,
@@ -292,6 +297,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2, t0 = 2, progress = false, q_store_max = 2, builtin_stats = :none,
@@ -310,6 +316,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2, t0 = 2, progress = false, q_store_max = 2, builtin_stats = :none
@@ -325,6 +332,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2, t0 = 2, progress = false, q_store_max = 2, builtin_stats = :none,
@@ -341,6 +349,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2, t0 = 2, progress = false, q_store_max = 2, builtin_stats = :none,
@@ -365,6 +374,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = SaemixMH(),
             maxiters = maxiters, t0 = maxiters, progress = false, q_store_max = 2,
             builtin_stats = :auto,

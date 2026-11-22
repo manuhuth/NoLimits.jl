@@ -115,13 +115,13 @@ end
 end
 
 @testset "SAEMOptions: auto_var_lb defaults" begin
-    opts = NoLimits.SAEM()
+    opts = NoLimits.SAEM(; louis_draws = 50, louis_draws = 50)
     @test opts.saem.auto_var_lb == true
     @test opts.saem.var_lb_value == 1.0e-5
 end
 
 @testset "SAEMOptions: auto_var_lb explicit override" begin
-    opts = NoLimits.SAEM(auto_var_lb = false, var_lb_value = 1.0e-6)
+    opts = NoLimits.SAEM(louis_draws = 50, auto_var_lb = false, var_lb_value = 1.0e-6)
     @test opts.saem.auto_var_lb == false
     @test opts.saem.var_lb_value == 1.0e-6
 end
@@ -143,6 +143,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2,
@@ -162,6 +163,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2,
@@ -197,6 +199,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2,
@@ -216,6 +219,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2,
@@ -258,6 +262,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 3, n_adapt = 2, progress = false),
             maxiters = 20,
@@ -301,6 +306,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2,
@@ -321,6 +327,7 @@ end
         res = fit_model(
             dm,
             NoLimits.SAEM(;
+                louis_draws = 50,
                 sampler = MH(),
                 turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
                 maxiters = 2,
@@ -368,6 +375,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 3, n_adapt = 2, progress = false),
             maxiters = 10,
@@ -399,6 +407,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 3, n_adapt = 2, progress = false),
             maxiters = 10,
@@ -447,6 +456,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 3, n_adapt = 2, progress = false),
             maxiters = 10,
@@ -477,6 +487,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 5,
@@ -579,7 +590,7 @@ end
 end
 
 @testset "Multi-chain: SAEMOptions n_chains defaults" begin
-    opts = NoLimits.SAEM().saem
+    opts = NoLimits.SAEM(; louis_draws = 50, louis_draws = 50).saem
     @test opts.n_chains == 1
     @test opts.auto_small_n_chains == true
     @test opts.small_n_chain_target == 50
@@ -587,6 +598,7 @@ end
 
 @testset "Multi-chain: SAEMOptions explicit values" begin
     opts = NoLimits.SAEM(;
+        louis_draws = 50,
         n_chains = 4, auto_small_n_chains = true, small_n_chain_target = 20
     ).saem
     @test opts.n_chains == 4
@@ -610,6 +622,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2, t0 = 2, progress = false, q_store_max = 2, builtin_stats = :none,
@@ -626,6 +639,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2, t0 = 2, progress = false, q_store_max = 2, builtin_stats = :none,
@@ -643,6 +657,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2, t0 = 1, progress = false, q_store_max = 2, builtin_stats = :none,
@@ -667,6 +682,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2, t0 = 1, progress = false, q_store_max = 2, builtin_stats = :none,
@@ -700,6 +716,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             maxiters = 40, t0 = 20, progress = false,
             auto_small_n_chains = true, small_n_chain_target = 50
         )
@@ -718,7 +735,7 @@ end
     dm = _mc_variance_dm()
     res = fit_model(
         dm,
-        NoLimits.SAEM(; maxiters = 10, t0 = 5, progress = false);
+        NoLimits.SAEM(; louis_draws = 50, maxiters = 10, t0 = 5, progress = false);
         constants = (; ω = 0.55)
     )
     @test get_params(res; scale = :untransformed).ω ≈ 0.55
@@ -736,6 +753,7 @@ end
     res = fit_model(
         dm,
         NoLimits.SAEM(;
+            louis_draws = 50,
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2,

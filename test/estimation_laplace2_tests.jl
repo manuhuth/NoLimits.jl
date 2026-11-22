@@ -805,9 +805,9 @@ struct _MBAlternate end
         @test_throws ErrorException MB(ctor(); schedule = 2, optim_kwargs = (; maxiters = 2))
     end
     @test_throws ErrorException MB(
-        NoLimits.SAEM(; mstep_sa_on_params = false); schedule = 2, em_variant = :scaled
+        NoLimits.SAEM(; louis_draws = 50, mstep_sa_on_params = false); schedule = 2, em_variant = :scaled
     )
-    @test NoLimits._minibatch_method(MB(NoLimits.SAEM(); schedule = 3)).saem.update_schedule == 3
+    @test NoLimits._minibatch_method(MB(NoLimits.SAEM(; louis_draws = 50, louis_draws = 50); schedule = 3)).saem.update_schedule == 3
     @test NoLimits._minibatch_method(MB(NoLimits.MCEM(); schedule = 3)).update_schedule == 3
     # AcceptedWarmStarts needs the deterministic full-batch objective
     ws = NoLimits.Laplace(; warm_starts = NoLimits.AcceptedWarmStarts())

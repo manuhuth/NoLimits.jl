@@ -737,7 +737,7 @@ end
         end
 
         # sampling-based methods have no deterministic θ-objective, and the scale is checked
-        @test_throws ErrorException og(NoLimits.SAEM(), dm, θ0)
+        @test_throws ErrorException og(NoLimits.SAEM(; louis_draws = 50, louis_draws = 50), dm, θ0)
         @test_throws ErrorException og(NoLimits.Laplace(), dm, θ0; scale = :nonsense)
         @test_throws ErrorException og(NoLimits.GHQuadrature(), dm, θ0; scale = :nonsense)
 
@@ -1677,7 +1677,7 @@ end
     @test abs(gσ(dmr)) < 1.0e-6
     @test abs(gσ(dm0)) > 1.0e-3
     llc0 = NoLimits.build_ll_cache(dm0; serialization = ser, force_saveat = true)
-    saem = NoLimits.SAEM(; maxiters = 3, q_store_max = 2)
+    saem = NoLimits.SAEM(; louis_draws = 50, maxiters = 3, q_store_max = 2)
     fit_s(d) = fit_model(d, saem; serialization = ser, rng = Random.Xoshiro(2), store_eb_modes = false)
     @test collect(NoLimits.get_params(fit_s(dm1); scale = :transformed)) ==
         collect(NoLimits.get_params(fit_s(dm0); scale = :transformed))
@@ -1762,7 +1762,7 @@ end
         @test getproperty(sw_, re)[!, end] ≈ getproperty(s0_, re)[!, end] rtol = 1.0e-6
     end
     @test !(sample_random_effects(dm0, fr(dmr); n_samples = 4, rng = Random.Xoshiro(7)).η_s[!, end] ≈ s0_.η_s[!, end])
-    @test_throws ArgumentError fit_model(dmr, NoLimits.SAEM(; suffstats = (args...) -> nothing))
+    @test_throws ArgumentError fit_model(dmr, NoLimits.SAEM(; louis_draws = 50, suffstats = (args...) -> nothing))
     @test_throws ArgumentError fit_model(dmr, NoLimits.MCMC(; sampler = MH()))
 
     # No random effects: MLE, Wald sandwich by default, CV totals weighted by v.

@@ -73,7 +73,7 @@ end
 
 @testset "SAEM: variance-only extra_objective moves ω (bug fix)" begin
     dm = _eo_re_dm()
-    saem = NoLimits.SAEM(; maxiters = 80, mcmc_steps = 10, n_chains = 1, progress = false)
+    saem = NoLimits.SAEM(; louis_draws = 50, maxiters = 80, mcmc_steps = 10, n_chains = 1, progress = false)
     res0 = fit_model(
         dm, saem; rng = MersenneTwister(1),
         serialization = SciMLBase.EnsembleSerial()
@@ -125,7 +125,7 @@ end
     )
     saem = fit_model(
         dm,
-        NoLimits.SAEM(; maxiters = 80, mcmc_steps = 10, n_chains = 1, progress = false);
+        NoLimits.SAEM(; louis_draws = 50, maxiters = 80, mcmc_steps = 10, n_chains = 1, progress = false);
         rng = MersenneTwister(2), extra_objective = pull,
         serialization = SciMLBase.EnsembleSerial()
     )
@@ -135,7 +135,7 @@ end
 
 @testset "extra_objective === nothing is a no-op (SAEM/MCEM unchanged)" begin
     dm = _eo_re_dm()
-    saem = NoLimits.SAEM(; maxiters = 40, mcmc_steps = 8, n_chains = 1, progress = false)
+    saem = NoLimits.SAEM(; louis_draws = 50, maxiters = 40, mcmc_steps = 8, n_chains = 1, progress = false)
     a = fit_model(
         dm, saem; rng = MersenneTwister(7),
         serialization = SciMLBase.EnsembleSerial()

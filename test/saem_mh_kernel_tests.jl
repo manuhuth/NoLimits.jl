@@ -50,6 +50,7 @@ end
     res = fit_model(
         dm,
         SAEM(
+            louis_draws = 50,
             sampler = AdaptiveNoLimitsMH(adapt_start = 5),
             maxiters = 2,
             mcmc_steps = 20,
@@ -71,6 +72,7 @@ end
     res = fit_model(
         dm,
         SAEM(
+            louis_draws = 50,
             sampler = AdaptiveNoLimitsMH(adapt_start = 2),
             maxiters = 2,
             mcmc_steps = 5,
@@ -112,6 +114,7 @@ end
     res = fit_model(
         dm,
         SAEM(
+            louis_draws = 50,
             sampler = AdaptiveNoLimitsMH(adapt_start = 5),
             maxiters = 2,
             mcmc_steps = 10,
@@ -152,6 +155,7 @@ end
     res_ln = fit_model(
         dm_ln,
         SAEM(
+            louis_draws = 50,
             sampler = AdaptiveNoLimitsMH(adapt_start = 2),
             maxiters = 1, mcmc_steps = 5, progress = false
         )
@@ -187,6 +191,7 @@ end
     res_lit = fit_model(
         dm_lit,
         SAEM(
+            louis_draws = 50,
             sampler = AdaptiveNoLimitsMH(adapt_start = 2),
             maxiters = 1, mcmc_steps = 5, progress = false
         )
@@ -226,6 +231,7 @@ end
     res = fit_model(
         dm,
         SAEM(
+            louis_draws = 50,
             sampler = AdaptiveNoLimitsMH(adapt_start = 5),
             maxiters = 2,
             mcmc_steps = 10,
@@ -299,6 +305,7 @@ end
     res = fit_model(
         dm,
         SAEM(
+            louis_draws = 50,
             sampler = SaemixMH(n_kern1 = 2, n_kern2 = 2),
             maxiters = 2,
             sa_burnin_iters = 0,
@@ -347,6 +354,7 @@ end
     res = fit_model(
         dm,
         SAEM(
+            louis_draws = 50,
             sampler = SaemixMH(),
             maxiters = 2,
             mcmc_steps = 1,
@@ -366,6 +374,7 @@ end
     res = fit_model(
         dm,
         SAEM(
+            louis_draws = 50,
             sampler = SaemixMH(n_kern1 = 2, n_kern2 = 2),
             maxiters = 2,
             sa_burnin_iters = 0,
@@ -391,6 +400,7 @@ end
     res = fit_model(
         dm,
         SAEM(
+            louis_draws = 50,
             sampler = SaemixMH(),
             maxiters = 2,
             mcmc_steps = 1,
@@ -473,6 +483,7 @@ end
     res = fit_model(
         dm,
         SAEM(
+            louis_draws = 50,
             sampler = SaemixMH(n_kern1 = 2, n_kern2 = 2),
             maxiters = 2,
             mcmc_steps = 1,
@@ -508,6 +519,7 @@ end
         res = fit_model(
             dm,
             SAEM(
+                louis_draws = 50,
                 sampler = MH(),
                 maxiters = 2,
                 t0 = 10,
@@ -531,6 +543,7 @@ end
         res = fit_model(
             dm,
             SAEM(
+                louis_draws = 50,
                 sampler = SaemixMH(n_kern1 = 2, n_kern2 = 2),
                 maxiters = 2,
                 mcmc_steps = 1,
@@ -548,6 +561,7 @@ end
             fit_model(
                 dm,
                 SAEM(
+                    louis_draws = 50,
                     sampler = SaemixMH(n_kern1 = 2, n_kern2 = 2),
                     maxiters = 2,
                     mcmc_steps = 1,
@@ -575,6 +589,7 @@ end
         res = fit_model(
             dm,
             SAEM(
+                louis_draws = 50,
                 sampler = SaemixMH(n_kern1 = 2, n_kern2 = 2),
                 maxiters = 2,
                 mcmc_steps = 1,
@@ -591,9 +606,10 @@ end
     end
 
     @testset "constructor validation — max_estep_retries and retry_mcmc_steps" begin
-        @test_throws Exception SAEM(max_estep_retries = -1)
-        @test_throws Exception SAEM(retry_mcmc_steps = 0)
+        @test_throws Exception SAEM(louis_draws = 50, max_estep_retries = -1)
+        @test_throws Exception SAEM(louis_draws = 50, retry_mcmc_steps = 0)
         s = SAEM(
+            louis_draws = 50,
             mstep_sa_on_params = true, max_estep_retries = 5, retry_mcmc_steps = 2,
             progress = false
         )
@@ -648,7 +664,7 @@ end
 
     # Through fit_model: with a still chain, the first M-step (γ = 1) sets ω² = mean(b0²).
     for method in (
-            SAEM(sampler = still, maxiters = 2, sa_burnin_iters = 0, progress = false),
+            SAEM(louis_draws = 50, sampler = still, maxiters = 2, sa_burnin_iters = 0, progress = false),
             MCEM(sampler = still, maxiters = 1, progress = false),
         )
         res = fit_model(dm, method; re_0 = re0, rng = MersenneTwister(1))
@@ -658,7 +674,7 @@ end
     end
 
     # Default unchanged: re_0 = nothing gives the same fit bit for bit.
-    m = SAEM(maxiters = 3, progress = false)
+    m = SAEM(louis_draws = 50, maxiters = 3, progress = false)
     p1 = NoLimits.get_params(fit_model(dm, m; rng = MersenneTwister(5)); scale = :untransformed)
     p2 = NoLimits.get_params(fit_model(dm, m; re_0 = nothing, rng = MersenneTwister(5)); scale = :untransformed)
     @test p1 == p2
