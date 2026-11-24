@@ -781,9 +781,13 @@ const _INV_SER = NoLimits.EnsembleSerial()
                     end
                 end
             end
-            for M in (NoLimits.Laplace, NoLimits.FOCEI)
+            # #446: an Optim inner optimizer also solves on the block-arrow structure
+            lbfgs = NoLimits.OptimizationOptimJL.LBFGS(
+                linesearch = NoLimits.LineSearches.BackTracking(maxstep = 1.0)
+            )
+            for M in (NoLimits.Laplace, NoLimits.FOCEI), kw in ((;), (; inner_optimizer = lbfgs))
                 fit_of(bt) = fit_model(
-                    dm_n, M(; optim_kwargs = (maxiters = 3,), batch_threading = bt);
+                    dm_n, M(; optim_kwargs = (maxiters = 3,), batch_threading = bt, kw...);
                     serialization = EnsembleThreads(), rng = MersenneTwister(1)
                 )
                 r0 = fit_of(false)

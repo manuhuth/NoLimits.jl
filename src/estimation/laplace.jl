@@ -1576,15 +1576,43 @@ end
 # -log f. Optim asks for the value of a trial point alone and for gradient and Hessian of an
 # accepted point; the last two share one pass (`_newton_grad_hess!`), cached per point.
 # A non-converged or non-finite result signals the LBFGS fallback (#426).
+# `structure`: a block-arrow batch, whose value and derivatives are taken per individual
+# (on `pool`) and assembled into the dense trust-region model.
 function _newton_tr_inner_solve(
         dm::DataModel, batch_info::REBatchInfo, θ_val::ComponentArray,
         const_cache::REConstantsCache, cache::_LLCache, ad_cache::LaplaceADCache,
-        bi::Int, b0::Vector{Float64}, newton::NewtonInner; tctx = nothing
+        bi::Int, b0::Vector{Float64}, newton::NewtonInner; tctx = nothing,
+        structure = nothing, pool = nothing
     )
     nb = length(b0)
     tctx === nothing && (tctx = _safe_theta_ctx(dm, batch_info, θ_val, cache))
+    st = structure
+    ctxs = st === nothing ? nothing :
+        _ba_theta_ctxs(st, newton.curvature, dm, θ_val, const_cache, cache, pool, b0; pctx = tctx)
     f = _LaplaceLogfBatch(dm, batch_info, θ_val, const_cache, cache, tctx)
-    isfinite(f(b0)) || return _NewtonSol(copy(b0), -Inf, Inf, false)
+    b_v, f_v = fill(NaN, nb), Ref(NaN)                   # value cache
+    b_d, g_d, H_d = fill(NaN, nb), zeros(nb), zeros(nb, nb)   # gradient/Hessian cache (log f)
+    function value_at(b)
+        b == b_v && return f_v[]
+        f_v[] = st === nothing ? f(b) : _ba_logf(st, dm, θ_val, b, const_cache, cache, pool, ctxs)
+        copyto!(b_v, b)
+        return f_v[]
+    end
+    isfinite(value_at(b0)) || return _NewtonSol(copy(b0), -Inf, Inf, false)
+    if st !== nothing
+        function ba_derivs_at!(b)
+            b == b_d && return nothing
+            _, g, Hs = _ba_grad_hess(st, newton.curvature, dm, θ_val, b, const_cache, cache, pool, ctxs)
+            copyto!(g_d, g)
+            fill!(H_d, 0)
+            for k in eachindex(Hs)
+                @views H_d[st.maps[k], st.maps[k]] .+= Hs[k]
+            end
+            copyto!(b_d, b)
+            return nothing
+        end
+        return _newton_tr_optimize(value_at, ba_derivs_at!, g_d, H_d, b0, newton)
+    end
     tctx = _newton_curvature_ctx(newton.curvature, tctx, dm, batch_info, const_cache, cache, b0)
     entry = ad_cache.grad_cfg[bi]
     if entry === nothing
@@ -1592,12 +1620,6 @@ function _newton_tr_inner_solve(
         ad_cache.grad_cfg[bi] = entry
     end
     cfg = _get_fd_cfg!(entry::_FDCfgStore, f, b0, () -> _logfb_grad_cfg(f, b0))
-    b_v, f_v = fill(NaN, nb), Ref(NaN)                   # value cache
-    b_d, g_d, H_d = fill(NaN, nb), zeros(nb), zeros(nb, nb)   # gradient/Hessian cache (log f)
-    function value_at(b)
-        b == b_v || (f_v[] = f(b); copyto!(b_v, b))
-        return f_v[]
-    end
     function derivs_at!(b)
         b == b_d && return nothing
         H = _newton_grad_hess!(
@@ -1613,6 +1635,11 @@ function _newton_tr_inner_solve(
         copyto!(b_d, b)
         return nothing
     end
+    return _newton_tr_optimize(value_at, derivs_at!, g_d, H_d, b0, newton)
+end
+
+# Optim's NewtonTrustRegion on -log f; `derivs_at!(b)` fills `g_d`/`H_d` (log f) at b.
+function _newton_tr_optimize(value_at, derivs_at!, g_d, H_d, b0::Vector{Float64}, newton::NewtonInner)
     function fgh!(F, G, H, b)
         if G !== nothing || H !== nothing
             derivs_at!(b)
@@ -1690,25 +1717,29 @@ function _laplace_solve_batch!(
         zeros(T, nb)
     end
     optimizer_use = optimizer
+    pctx = structure === nothing ? nothing :
+        tctx isa _LaplaceThetaCtx ? tctx : _safe_theta_ctx(dm, batch_info, θ_val, cache)
     if optimizer isa NewtonInner
         # block-arrow batch: `max_dim` bounds the sub-batch and shared-block dimensions
-        if structure !== nothing && optimizer.globalization === :linesearch &&
-                structure.max_dim <= optimizer.max_dim
+        fits = structure === nothing ? nb <= optimizer.max_dim :
+            structure.max_dim <= optimizer.max_dim
+        if fits && structure !== nothing && optimizer.globalization === :linesearch
             nsol = _ba_newton_solve(
                 structure, dm, θ_val, const_cache, cache, pool, collect(Float64, b0_use),
-                optimizer; f0_min = f0_min,
-                pctx = tctx isa _LaplaceThetaCtx ? tctx : _safe_theta_ctx(dm, batch_info, θ_val, cache)
+                optimizer; f0_min = f0_min, pctx = pctx
             )
             nsol === nothing && return nothing
             nsol.converged && return nsol
             b0_use = nsol.u
-        elseif nb <= optimizer.max_dim
+        elseif fits
             solve_fn = optimizer.globalization === :trust_region ? _newton_tr_inner_solve :
                 _newton_inner_solve
             nsol = solve_fn(
                 dm, batch_info, θ_val, const_cache, cache,
                 ad_cache, bi, collect(Float64, b0_use), optimizer;
-                tctx = tctx, (f0_min === nothing ? (;) : (; f0_min = f0_min))...
+                tctx = structure === nothing ? tctx : pctx,
+                (structure === nothing ? (;) : (; structure = structure, pool = pool))...,
+                (f0_min === nothing ? (;) : (; f0_min = f0_min))...
             )
             nsol === nothing && return nothing   # start screened out (`f0_min`)
             nsol.converged && return nsol
@@ -1719,6 +1750,11 @@ function _laplace_solve_batch!(
         end
         optimizer_use = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0))
     end
+    # block-arrow batch: per-individual objective and derivatives, whatever `batch_threading`
+    structure === nothing || return _ba_optim_solve(
+        structure, dm, θ_val, const_cache, cache, pool, collect(Float64, b0_use),
+        optimizer_use, optim_kwargs, pctx
+    )
     opt_entry = ad_cache.optf[bi]
     if opt_entry === nothing || opt_entry[1] != typeof(adtype)
         f = _LaplaceLogfBatchParam(dm, batch_info, const_cache, cache)
@@ -3020,7 +3056,9 @@ random effects.
 - `optim_kwargs = nothing`: keyword arguments for the outer `solve` call; `nothing` = `(; maxiters = 1000)`, plus `reltol = 1e-12` (stop after two successive iterations that change the objective by <= 1e-12 relative) for an Optim.jl optimizer.
 - `adtype`: AD backend for the outer optimizer. Defaults to `AutoForwardDiff()`.
 - `inner_optimizer`: inner optimizer for computing EBE modes. Defaults to [`NewtonInner`](@ref)
-  (damped Newton, falls back to LBFGS when a solve stalls).
+  (damped Newton, falls back to LBFGS when a solve stalls). Give a user-supplied Optim.jl
+  optimizer a bounded first step, e.g. `LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0))`:
+  the default line search can try random-effect values far from the mode (and fail ODE solves).
 - `inner_kwargs::NamedTuple = NamedTuple()`: keyword arguments for the inner `solve` call.
 - `inner_adtype`: AD backend for the inner optimizer. Defaults to `AutoForwardDiff()`.
 - `inner_grad_tol`: EB-mode gradient threshold (`:auto`: `1e-8`, or `1e-2` for ODE models).
@@ -3060,8 +3098,12 @@ random effects.
   all individuals sharing a level form one batch, and batches are otherwise the unit of
   threading. A batch with at least two individuals whose shared random effects make up at
   most half of its random-effect dimension is always solved through its block-arrow
-  structure (per-individual derivatives, Schur complement on the shared random effects);
-  with this option its per-individual work runs on all threads. Only active with
+  structure: its log-joint, gradient and Hessian are assembled from per-individual terms
+  (Schur complement on the shared random effects in the Newton step and the
+  log-determinant). This holds for every `inner_optimizer`: `NewtonInner` (whose `max_dim`
+  then bounds the per-individual and shared dimensions) and any other optimizer, which gets
+  the assembled objective, gradient and Hessian, so `inner_adtype` is not used for such a
+  batch. With this option the per-individual work runs on all threads. Only active with
   `serialization = EnsembleThreads()`. Results are bitwise identical to `false`.
 - `lb`, `ub`: bounds on the transformed fixed-effect scale, or `nothing`.
 - `precondition::Bool = true`: optimize the scaled offset `z` with

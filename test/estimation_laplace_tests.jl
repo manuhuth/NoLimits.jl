@@ -698,6 +698,33 @@ end
         @test oos ≈ os rtol = 1.0e-10
     end
 
+    # #446: inner solves other than the line-search Newton run on the block-arrow objective,
+    # gradient and Hessian: the dense solve's mode, bitwise equal with and without a pool
+    dm = fx_mg_dm()
+    _, infos, cc = NoLimits._build_re_batch_infos(dm, NamedTuple())
+    θ = get_θ0_untransformed(NoLimits.get_model(dm).fixed.fixed)
+    pool = [build_ll_cache(dm) for _ in 1:Threads.maxthreadid()]
+    bt = LineSearches.BackTracking(maxstep = 1.0)
+    optimizers = (
+        OptimizationOptimJL.LBFGS(linesearch = bt), OptimizationOptimJL.Newton(),
+        NewtonInner(; globalization = :trust_region, x_abstol = 1.0e-10),
+        NewtonInner(; max_dim = 0),   # always the LBFGS fallback
+    )
+    for (bi, info) in enumerate(infos)
+        st = NoLimits._ba_structure(dm, info, cc)
+        st === nothing && continue
+        b0 = collect(range(-0.2, 0.3; length = NoLimits.get_n_b(info)))
+        for opt in optimizers
+            solve_of(s, p) = NoLimits._laplace_solve_batch!(
+                dm, info, θ, cc, pool[1], NoLimits._init_laplace_ad_cache(length(infos)), bi, b0;
+                optimizer = opt, structure = s, pool = p
+            )
+            rd, rs, rp = solve_of(nothing, nothing), solve_of(st, nothing), solve_of(st, pool)
+            @test rs.u ≈ rd.u atol = 1.0e-5
+            @test rp.u == rs.u
+        end
+    end
+
     # Compact tags (_nl_tag, Val(false)) against ForwardDiff's default tags and finite
     # differences, at every nesting the Laplace/FOCEI paths use (#408)
     @testset "compact ForwardDiff tags in nested passes (#408)" begin

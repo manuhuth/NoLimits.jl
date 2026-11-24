@@ -476,3 +476,39 @@ function _ba_grad_batch(
     grad = grad_logf .- 0.5 .* (gld_θ .+ corr)
     return (logf = logf, logdet = F.logdet, grad = ComponentArray(grad, axs))
 end
+
+# Inner mode solve of a structured batch with an Optimization.jl optimizer (any inner
+# optimizer but the block-arrow Newton): -log f, its gradient and its exact Hessian are
+# assembled from the per-individual terms on `pool`, so `inner_adtype` is not used.
+function _ba_optim_solve(
+        st::_BAStructure, dm::DataModel, θ::ComponentArray, const_cache, cache, pool,
+        b0::Vector{Float64}, optimizer, optim_kwargs::NamedTuple, pctx
+    )
+    curv = ExactHessianCurvature()
+    ctxs = _ba_theta_ctxs(st, curv, dm, θ, const_cache, cache, pool, b0; pctx = pctx)
+    obj(b, _) = -_ba_logf(st, dm, θ, b, const_cache, cache, pool, ctxs)
+    function grad!(G, b, _)
+        n = length(st.subs)
+        gs = Vector{Vector{Float64}}(undef, n)
+        _ba_foreach(n, cache, pool) do k, c
+            bk = b[st.maps[k]]
+            f = _LaplaceLogfBatch(dm, st.subs[k], θ, const_cache, c, ctxs[k])
+            gs[k] = ForwardDiff.gradient(f, bk, _logfb_grad_cfg(f, bk), Val(false))
+        end
+        fill!(G, 0)
+        for k in 1:n
+            @views G[st.maps[k]] .-= gs[k]
+        end
+        return G
+    end
+    function hess!(H, b, _)
+        _, _, Hs = _ba_grad_hess(st, curv, dm, θ, b, const_cache, cache, pool, ctxs)
+        fill!(H, 0)
+        for k in eachindex(Hs)
+            @views H[st.maps[k], st.maps[k]] .-= Hs[k]
+        end
+        return H
+    end
+    optf = OptimizationFunction(obj; grad = grad!, hess = hess!)
+    return solve(OptimizationProblem(optf, b0), optimizer; optim_kwargs...)
+end
