@@ -1070,13 +1070,15 @@ A gradient-based outer optimizer must cap its line-search step; see the `optimiz
 Keyword arguments mirror [`Laplace`](@ref) (including `precondition`, `multistart_progress`
 (a progress bar for the inner EBE multistart), `warm_starts`,
 see [`AcceptedWarmStarts`](@ref), and `batch_threading`, which threads over the individuals
-of a nested random-effects batch, default `false`); the only
+of a nested random-effects batch for every `inner_optimizer`, default `false`; a nested batch
+ignores `inner_adtype`, see [`Laplace`](@ref)); the only
 addition is `interaction::Bool=true`. The `optimizer` default is LBFGS with backtracking
 (for mini-batching wrap the method in [`MiniBatch`](@ref)). The `inner_optimizer` default
 differs from Laplace: a Gauss-Newton [`NewtonInner`](@ref) with the same Fisher-information
 curvature (`NewtonInner(curvature = FisherInformationCurvature(true), x_abstol = 1e-10)`),
 which needs first-order AD only and falls back to LBFGS where it stalls. Pass
-`inner_optimizer = LBFGS(...)` for the previous default.
+`inner_optimizer = LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0))` for the
+previous default; give any user-supplied Optim.jl inner optimizer such a bounded first step.
 """
 struct FOCEI{O, K, A, IO, HO, CO, MS, L, U, US, WS} <: FittingMethod
     optimizer::O
